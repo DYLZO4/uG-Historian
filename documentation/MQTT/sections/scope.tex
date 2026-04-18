@@ -1,0 +1,21 @@
+\section{Scope}
+The following contraints apply to all documented design decisions.
+
+\begin{table}[H]
+  \caption{Design Constraints}
+  \begin{tabular}{ll}
+    \hline
+    \textbf{Parameter} & \textbf{Value} \\
+    \hline
+    Transport Medium & Wired Ethernet (LAN) only \\
+    Number of DAQ nodes (validation testbed) & 2 \\
+    DAQ node MCUJ & STM32 (IEEE 1588 hardware timestamping supported) \\
+    Time synchronisation protocol & PTP (IEEE 1588-2019) \\
+    Historian & InfluxDB v2 \\
+    Target measurement standards & IEC 61000-4-30 Class S, IEEE 1459-2010 \\
+    \hline
+  \end{tabular}
+\end{table}
+
+Wireless transport is specifically out of scope. The wired only constraint eliminates RF-induced jitter as a variable in timestamp accuracy, permitting PTP synchronisation to operate within the sub-microsectond range achievable on a switched Ethernet topology. The two-node testbed reflects hardware availabilityat the time of validation; the architecture imposes no upper bound on the number of nodes.
+

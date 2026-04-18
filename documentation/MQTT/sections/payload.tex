@@ -1,0 +1,61 @@
+\section{Payload Format}
+\subsection{Format Selection}
+Payloads are serialised as UTF-8 JSON. This prioritises developer ergonomics and debuggability during the research phase: payloads are huiman-readable, trivially inspected with any MQTT client and require no schema negotiation between publisher and subscriber. Migration to a binary format such as MessagePack or CBOR is possible if bandwidth or parsing overhead becomes a concern, but is not anticipated on a wired LAN with two nodes. 
+
+\subsection{Single-Sample Payload}
+\begin{lstlisting}[language=json]
+  {
+    "ts": 1713400000.123456,
+    "v": 231.45
+  }
+\end{lstlisting}
+
+\begin{table}[H]
+  \caption{Single-Sample Payload Description}\label{tab:}
+  \centering
+  \begin{tabular}{llp{0.8\linewidth}}
+    \hline
+    \textbf{Field} & \textbf{Type} & \textbf{Description} \\
+    \hline
+    \texttt{ts} & float64 & PTP-synchronised Unix timestamp (fractional seconds) sourced from the STM32 IEEE 1588 hardware clock \\
+    \texttt{v} & float32 & Measurement value in SI units \\
+    \hline
+    \end{tabular}
+\end{table}
+
+The timestamp is sourcef from the STM32 IEEE 1588 hardware timestamping peripheral, not the system tick counter. This preserves PTP synchronisation accurcy end--to-end, from the ADC sample through to the broker and into the InfluxDB point timestamp
+
+Units are implied by the topic rather than included in the payload. For example, a message on \texttt{microgrid/node\_01/voltage/phase\_a} is understood to carry a value in volts. 
+
+\subsection{Burst Payloads}
+For high-frequency acquisition where per-message overhead is a concern, multiple samples may be batched into a single publish:
+
+\subsection{Single-Sample Payload}
+\begin{lstlisting}[language=json]
+  {
+    "ts": 1713400000.000000,
+    "dt": 0.000312,
+    "v":  [231.45, 231.47, 231.43, 231.50]
+  }
+\end{lstlisting}
+
+\begin{table}[H]
+  \caption{Burst Payload Description}\label{tab:}
+  \centering
+  \begin{tabular}{llp{0.8\linewidth}}
+    \hline
+    \textbf{Field} & \textbf{Type} & \textbf{Description} \\
+    \hline
+    \texttt{ts} & float64 & Timestamp of the first sample in the batch  \\
+    \texttt{dt} & float64 & Inter-sample interval in seconds \\
+    \texttt{v} & float32 & Ordered array of sample values \\
+    \hline
+    \end{tabular}
+\end{table}
+
+The historian bridge reconstructs individual timestamps as $t_s + i \cdot \Delta t$ for sample index i, and writes each as a separate InfluxDB point. 
+
+The decision between single--sample and burst sample publishing depends on the ADC sample rate (yet to be finalided). This should be resolved before the firmware publish loop is implemented.
+
+
+

@@ -1,0 +1,4 @@
+\section{Overview}
+This document describes the MQTT protocol design for the distributed real-time telemetry system developed as part of the EGH490 thesis project at the Queensland University of Technology. The system acquires electrical measurments from STM32-based data acquisition nodes deployed across the QUT microgrid and transports them to centralised time-series historian via an MQTT message broker,
+
+The design covers broker selection and configuration, topic heirachy, payload format, quality of service strategy, client architecture, security posture, and historian integration. All decisions are scoped to a two-node validation testbed operating over a wired ethernet LAN, with the architecture designed to generalise to an arbitrary number of nodes without structural change. 

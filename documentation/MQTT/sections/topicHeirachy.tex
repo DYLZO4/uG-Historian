@@ -1,0 +1,40 @@
+\section{Topic Hierachy}
+\subsection{Naming Scheme}
+Topics follow a four-level hierachy:
+\begin{lstlisting}
+  microgrid/<node_id>/<subsystem>/<measurement>
+\end{lstlisting}
+
+\begin{table}[H]
+\caption{Hierachy Description}
+\centering
+  \begin{tabular}{lll}
+    \hline
+    \textbf{Segment} & \textbf{Description} & \textbf{Example Values} \\
+    \hline
+    \texttt{node\_id} & Fixes, zero-padded node identifier & \texttt{node\_1}, \texttt{node\_2} \\
+    \texttt{subsystem} & Electrical quantity category& \texttt{voltage}, \texttt{current}, \texttt{power}, \texttt{frequency} \\
+    \texttt{measurement} & Specific measured quality & \texttt{phase\_a}, \texttt{active}, \texttt{reactive}, \texttt{fundamental} \\
+    \hline
+  \end{tabular}
+\end{table}
+
+Node identifiers are fixed strings assigned at firmware flash time. MAC addresses and IP addresses are explicitly avoided as node identifiers as both are mutable and would invalidate historical records if hardware is replaced. Measurement names are aligned with IEEE 1459-2010 terminology where applicable
+
+\subsection{Example Topics}
+\subsection{Wildcard Subscription Patterns}
+\begin{table}[H]
+  \caption{Wildcard Subscription Patterns}
+  \centering
+  \begin{tabular}{ll}
+      \hline
+      \textbf{Pattern} & \textbf{Use Case} \\
+      \hline
+      microgrid/\# & full subscription: used by the InfluxDB historian bridge \\
+      microgrid/\+/status/heartbeat  & node liveness monitoring across all nodes\\
+      microgrid/node\_01/\# & All measurements from a single node (debugging) \\
+      microgrid/\+/voltage\# & All voltage measurements across all nodes \\
+      \hline
+    \end{tabular}
+\end{table}
+
