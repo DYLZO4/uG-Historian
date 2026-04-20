@@ -10,3 +10,16 @@
 \contentsline {subsection}{\numberline {5.2}Single-Sample Payload}{4}{}%
 \contentsline {subsection}{\numberline {5.3}Burst Payloads}{5}{}%
 \contentsline {subsection}{\numberline {5.4}Single-Sample Payload}{5}{}%
+\contentsline {section}{\numberline {6}Quality of Service Levels \& Retained Messages}{5}{}%
+\contentsline {subsection}{\numberline {6.1}Quality of Service Strategy}{5}{}%
+\contentsline {subsection}{\numberline {6.2}Retained Messages}{6}{}%
+\contentsline {subsection}{\numberline {6.3}Last Will and Testament}{6}{}%
+\contentsline {section}{\numberline {7}Client Architecture}{6}{}%
+\contentsline {subsection}{\numberline {7.1}DAQ Nodes (STM32 Publishers)}{6}{}%
+\contentsline {paragraph}{Publish Loop}{7}{}%
+\contentsline {paragraph}{Connection Management}{7}{}%
+\contentsline {subsection}{\numberline {7.2}Historian Bridge}{7}{}%
+\contentsline {subsection}{\numberline {7.3}Security}{8}{}%
+\contentsline {paragraph}{Phase 1: Development}{8}{}%
+\contentsline {paragraph}{Phase 2: Hardening}{8}{}%
+\contentsline {paragraph}{Phase 3: TLS (future)}{8}{}%

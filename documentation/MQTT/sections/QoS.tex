@@ -1,0 +1,58 @@
+\section{Quality of Service Levels \& Retained Messages}
+
+\subsection{Quality of Service Strategy}
+MQTT defines three quality of service (QoS) levels governing delivery guarantees between publisher and broker, and between broker and subscriber. The appropriate level is selected per message type based on frequency and the consequence of loss. 
+
+
+\begin{table}[H]
+  \caption{QoS Strategy}
+  \centering
+  \begin{tabular}{llp{0.5\linewidth}}
+    \hline
+    \textbf{Message Type} & \textbf{QoS} & \textbf{Rationale} \\
+    \hline
+    Periodic Telemetry Samples & 0 (fire and forget) & High Frequency; ACK overhead is disproportionate to benefit; a missed sample is bounded and tolerable; retransmitting a stale sample is actively harmful to the historian. \\
+    Events and Alarms & 1 (at least once) & Low frequency; loss of a discrete event is significant \\
+    Configuration updates & 1 (at least once) & Low frequency; idempotent processing at the reciever \\
+    \hline
+    \end{tabular}
+\end{table}
+
+QoS 2 (exactly once) is not used as the four-way handshake overhead is rarely justified in practice. Additionally, the historian bridge handles potoential duplicate ingestion gracefully. 
+
+\subsection{Retained Messages}
+The MQTT retained message flag instructs the broker to store the most recent messages on a given topic and deliver it immediately to any new subscriber. This is used selectively
+
+\begin{table}[H]
+  \caption{Retained Messages}
+  \centering
+  \begin{tabular}{p{0.45\linewidth}lp{0.4\linewidth}}
+    \hline
+    \textbf{Topic} & \textbf{Retained} & \textbf{Rationale} \\
+    \hline
+    \texttt{microgrid/<node\_id>/status/heartbeat} & Yes & New subscribers immediately see current node liveness without waiting for the next publish. \\
+    \texttt{microgrid/<node\_id>/status/heartbeat} & Yes & Current node configuration is available to sbscribe on connect. \\ 
+    All telemetry topics & No & Retaining high--frequency samples causes a burst of stale data delivered to every new subscriber connection. \\
+    \hline
+    \end{tabular}
+\end{table}
+
+\subsection{Last Will and Testament}
+Each DAQ node client is configured with a Last Will and Testament (LWT) message. The LWT is a payload pre-registered with the broker at connection time; the broker publishes it automatically if the client disconnects ungracefully without sending a disconnect packet. 
+
+\begin{table}[H]
+  \caption{Last Will and Testament}
+  \centering
+  \begin{tabular}{ll}
+    \hline
+    \textbf{Parameter} & \textbf{Value} \\
+    \hline
+    Topic & \texttt{microgrid/<node\_id>/status/heartbeat} \\
+    Payload & \texttt{\{"status": "offline"\}} \\
+    QoS & 1 \\
+    Retain & true \\
+    \hline
+    \end{tabular}
+\end{table}
+
+On reconnection, the node publishes \texttt{\{"status": "online"\}} to the same topic (retained, QoS 1), overwriting the LWT. This gives the broader system a reliable, broker-mediated mechanism for node liveness detection without requiring any application-level timeout logic in the subscriber.

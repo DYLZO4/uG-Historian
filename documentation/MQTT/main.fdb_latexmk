@@ -1,17 +1,17 @@
 # Fdb version 4
-["biber main"] 0 "main.bcf" "main.bbl" "main" 1776495309.4733 0
+["biber main"] 0 "main.bcf" "main.bbl" "main" 1776674205.65691 0
   "main.bcf" 0 -1 0 "xelatex"
   "references.bib" 0 -1 0 ""
   (generated)
   "main.bbl"
   "main.blg"
   (rewritten before read)
-["xdvipdfmx"] 1776495309.35049 "main.xdv" "main.pdf" "main" 1776495309.47448 0
-  "main.xdv" 1776495309.27554 100620 da7a6d80525d671be8fe3497d7c5bffb "xelatex"
+["xdvipdfmx"] 1776674205.52976 "main.xdv" "main.pdf" "main" 1776674205.65797 0
+  "main.xdv" 1776674205.44672 187708 de423794f0b38cc6db57975d4b7e1a93 "xelatex"
   (generated)
   "main.pdf"
   (rewritten before read)
-["xelatex"] 1776495308.42101 "main.tex" "main.xdv" "main" 1776495309.47345 0
+["xelatex"] 1776674204.51916 "main.tex" "main.xdv" "main" 1776674205.65699 0
   "/usr/share/texmf-dist/fonts/tfm/public/amsfonts/cmextra/cmex7.tfm" 1775415801 1004 54797486969f23fa377b128694d548df ""
   "/usr/share/texmf-dist/fonts/tfm/public/amsfonts/cmextra/cmex8.tfm" 1775415801 988 bdf658c3bfc2d96d3c8b02cfc1c94c20 ""
   "/usr/share/texmf-dist/fonts/tfm/public/amsfonts/symbols/msam10.tfm" 1775415801 916 f87d7c45f9c908e672703b83b72241a3 ""
@@ -92,7 +92,6 @@
   "/usr/share/texmf-dist/tex/latex/l3packages/xparse/xparse.sty" 1775415801 10176 c2fc1c663b3f3899ddac6e6ed3fb1d7e ""
   "/usr/share/texmf-dist/tex/latex/listings/listings.cfg" 1775415801 1865 73df61e45e2dfdc239ef37ab16d87d6a ""
   "/usr/share/texmf-dist/tex/latex/listings/listings.sty" 1775415801 81627 6a9c17f89f356724d1c9813b7025f0c1 ""
-  "/usr/share/texmf-dist/tex/latex/listings/lstlang1.sty" 1775415801 206518 095934a0019dcba14af528744bf9b295 ""
   "/usr/share/texmf-dist/tex/latex/listings/lstmisc.sty" 1775415801 77105 002e983b638eadbf04e580642335f689 ""
   "/usr/share/texmf-dist/tex/latex/listings/lstpatch.sty" 1775415801 353 9024412f43e92cd5b21fe9ded82d0610 ""
   "/usr/share/texmf-dist/tex/latex/logreq/logreq.def" 1775415801 1620 fb1c32b818f2058eca187e5c41dfae77 ""
@@ -105,15 +104,18 @@
   "/usr/share/texmf-dist/web2c/texmf.cnf" 1775415801 43569 fd570f2fa160877d211e859f687312ba ""
   "/var/lib/texmf/web2c/xetex/xelatex.fmt" 1776308965 4836376 4899207605a54d5df97b684489ce8445 ""
   "QUT.jpg" 1776488334.67607 112941 2a949510a418ca8e07df06c7e8e70ac5 ""
-  "main.aux" 1776495309.27289 2235 87217e472d895769b6dcdb48cc6bd36e "xelatex"
+  "main.aux" 1776674205.44392 4089 90f52a7b53ac43fde9618bd32a14d03b "xelatex"
   "main.bbl" 0 -1 0 "biber main"
-  "main.run.xml" 1776495309.27554 2462 3759e4387622e92917e6e9db70435138 "xelatex"
-  "main.tex" 1776494218.93952 4156 01d27a5e54568b979affc094fee16ece ""
-  "main.toc" 1776495309.27554 802 d6802d0fc80a1c0452be9271e6a690f3 "xelatex"
-  "sections/broker.tex" 1776490861.74645 1459 c5e41a8ebe2e312c2728d5388af8cd69 ""
+  "main.run.xml" 1776674205.44672 2462 3759e4387622e92917e6e9db70435138 "xelatex"
+  "main.tex" 1776674202.73033 4548 df07b8834a5bebb3324e35879dc0f9db ""
+  "main.toc" 1776674205.44672 1654 7b4ad22cf58c38bf8bc038182f2c7606 "xelatex"
+  "sections/QoS.tex" 1776663309.45476 3013 3374b185baa7be626cbc68d7a5aca444 ""
+  "sections/broker.tex" 1776665233.49746 1462 42cdfd0ea092e744d76706470b7eb0bc ""
+  "sections/clientArchitecture.tex" 1776665148.99388 2939 a28a076e1aeaad97248473299fe2e580 ""
   "sections/overview.tex" 1776488471.23657 790 fe2b78109eeb87cfcb62f7df40fd1a99 ""
-  "sections/payload.tex" 1776495308.39455 2640 7787973fb20d157bd14bfed80c2c0f53 ""
+  "sections/payload.tex" 1776662009.57654 2627 170fc76d89653948456980719b0ed0d7 ""
   "sections/scope.tex" 1776489216.53934 1008 e93e55a97e1cfd5d785ed867ff812ca8 ""
+  "sections/security.tex" 1776666389.50386 1321 f96340ca2e3a91695a8114a5604542aa ""
   "sections/topicHeirachy.tex" 1776493763.97207 1664 1e5478f370e106da49261f44564399aa ""
   (generated)
   "main.aux"

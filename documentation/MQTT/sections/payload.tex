@@ -42,13 +42,13 @@ For high-frequency acquisition where per-message overhead is a concern, multiple
 \begin{table}[H]
   \caption{Burst Payload Description}\label{tab:}
   \centering
-  \begin{tabular}{llp{0.8\linewidth}}
+  \begin{tabular}{lll}
     \hline
     \textbf{Field} & \textbf{Type} & \textbf{Description} \\
     \hline
     \texttt{ts} & float64 & Timestamp of the first sample in the batch  \\
     \texttt{dt} & float64 & Inter-sample interval in seconds \\
-    \texttt{v} & float32 & Ordered array of sample values \\
+    \texttt{v} & float32[] & Ordered array of sample values \\
     \hline
     \end{tabular}
 \end{table}

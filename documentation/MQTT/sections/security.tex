@@ -1,0 +1,17 @@
+\subsection{Security}
+Security is implemented in phases dependent on deployment environment, The system operates on a university reseach lab LAN and is not exposed to public internet; accordingly, the security measures are pragmatic rather than exhaustive.
+
+\paragraph{Phase 1: Development}
+\begin{itemize}[noitemsep]
+  \item The broker is bound to the lab LAN interface only and is not reachable from the broader campus network.
+  \item Anonymous connections are disbaled
+  \item Username and password authentication is enabled via Mosquitto's built--in password file mechanism
+  \item Seperate credentials are issued per client (one per DAQ node, one for the Telegraf bridge)
+\end{itemize}
+
+\paragraph{Phase 2: Hardening} ~\\
+Access control lists (ACLs) enforce the principle of least privege. Each DAQ node may only publish to its own topic subtree; a compromised node cannot spoof measurements from antoher node. The Telegraf bridge may subscribe to the full topic tree but cannot publish. 
+
+\paragraph{Phase 3: TLS (future)} ~\\
+If the broker is ever exposed outside the lab VLAN, mutual TLS on port 8883 with certificates issued by a local certificate authority is the intended upgrade path. This is not required for the current testbed scope, however has been included should the system be deployed more broadly.
+

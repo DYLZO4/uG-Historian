@@ -11,7 +11,7 @@ Alternatives such as EMQX and HiveMQ were considered but are designed for large-
 
 The broker runs on the microgrid historian server, bound to the lab LAN interface. Key configuration parameters are as follows:
 
-\begin{lstlisting}[language=C]
+\begin{lstlisting}[language=toml]
 listener 1883 <lab_lan_ip>
 allow_anonymous false
 password_file /etc/mosquitto/passwd

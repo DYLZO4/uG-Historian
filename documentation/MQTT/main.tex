@@ -82,6 +82,19 @@
       {]}{{{\color{delim}{]}}}}{1},
 }
 
+
+\lstdefinelanguage{toml}{
+    morekeywords={true,false},
+    morecomment=[l]{\#},
+    morestring=[b]",
+    morestring=[b]',
+    keywordstyle=\color{blue},
+    commentstyle=\color{gray},
+    stringstyle=\color{orange},
+    basicstyle=\ttfamily\small,
+    breaklines=true,
+}
+
 \lstset{
   backgroundcolor=\color{codebg},
   basicstyle=\ttfamily\small\color{codefg},
@@ -151,7 +164,7 @@
         \hline
         \textbf{Version} & \textbf{Date} & \textbf{Author} & \textbf{Changes / Comments} \\
         \hline
-        1 & \today & Dylan Hessing &   \\
+        1 & April 20, 2026 & Dylan Hessing & Initial Design \\
         \hline
     \end{tabular}
 
@@ -163,5 +176,9 @@
 \input{sections/broker.tex}
 \input{sections/topicHeirachy.tex}
 \input{sections/payload.tex}
+\input{sections/QoS.tex}
+\input{sections/clientArchitecture.tex}
+\input{sections/security.tex}
 \newpage
+
 \end{document}

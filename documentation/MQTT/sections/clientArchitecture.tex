@@ -1,0 +1,58 @@
+\section{Client Architecture}
+\subsection{DAQ Nodes (STM32 Publishers)}
+Each STM32 DAQ node operates as an MQTT publisher. The node runs a lightweight MQTT client library on top of the STM32 HAL and LwIP TCP/IP stack. Two candidate libraries are suitable for this environment:
+
+
+\begin{table}[H]
+  \caption{DAQ Nodes}
+  \centering
+  \begin{tabular}{lp{0.7\linewidth}}
+    \hline
+    \textbf{Library} & \textbf{Notes} \\
+    \hline
+    Paho MQTT Embedded C & Mature, widely used, runs on bare metal or FreeRTOS \\
+    FreeRTOS CoreMQTT & Purpose-built for embedded, minimal footprint, well-suited if FreeRTOS is adopted as the RTOS \\
+    \hline
+    \end{tabular}
+\end{table}
+
+Final Library selection is dependent on the RTOS decision for DAQ firmware which is outside the scope of this document.
+
+\paragraph{Publish Loop} ~\\
+The nominal publish sequence on each node is as follows:
+\begin{enumerate} [noitemsep]
+  \item ADC DMA transfer completes; the ISR signals the processing task via a FreeRTOS notification or baremetal semaphore
+  \item The processing task computes any required derived quantities
+  \item The result is serialised into a JSON payload as described
+  \item The payload is published to the broker on the appropriate topic at QoS 0
+\end{enumerate}
+
+\paragraph{Connection Management} ~\\
+ On power-on, the node waits for network availability then connects to the broker using its pre-configured credentials. On connection loss, exponential back--off is applied before reconnect attempts. Critical events such as alarms and status changes are buffered in a SRAM ring buffer during disconnection and flushed on reconnect. Periodic telemetry samples are not buffered during disconnection; the resulting gap is visible in hte historian which is acceptable for a research testbed. 
+
+Client IDs follow the convention \texttt{mqttc--<node\_id>}. 
+
+\subsection{Historian Bridge}
+Telegraf with the MQTT consumer input plugin is used as the historian bridge. This provides a configuration-driven pathway from the broker to InfluxDB with no custom subscriber code required. The \texttt{topic\_parsing} feature extracts topic path segments directly as InfluxDB tags, so each point written to InfluxDB is automatically tagged with \texttt{node\_id}, \texttt{subsystem} and \texttt{measurement}. 
+
+\begin{lstlisting}[language=toml]
+[[inputs.mqtt_consumer]]
+  servers     = ["tcp://localhost:1883"]
+  topics      = ["microgrid/#"]
+  username    = "telegraf"
+  password    = "${TELEGRAF_MQTT_PASSWORD}"
+  qos         = 0
+  data_format = "json"
+  json_time_key    = "ts"
+  json_time_format = "unix"
+
+  [[inputs.mqtt_consumer.topic_parsing]]
+    topic = "microgrid/<node_id>/<subsystem>/<measurement>"
+    tags  = "_/<node_id>/<subsystem>/<measurement>"
+
+[[outputs.influxdb_v2]]
+  urls         = ["http://localhost:8086"]
+  token        = "${INFLUXDB_TOKEN}"
+  organization = "qut-microgrid"
+  bucket       = "telemetry"
+\end{lstlisting}
