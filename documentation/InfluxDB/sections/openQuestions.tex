@@ -1,0 +1,21 @@
+\section{Open Questions}
+The following items remain unresolved at the time of writing and must be closed before the implementation phase begins.
+
+\begin{table}[H]
+\centering
+\caption{Open Questions \& Next Steps}
+\begin{tabular}{llp{0.4\linewidth}l}
+\hline
+\textbf{\#} & \textbf{Question} & \textbf{Impact} & \textbf{Owner} \\
+\hline
+1 & ADC sample rate per channel & Drives storage volume estimate, determines whether burst payloads are needed, and sets \texttt{flush\_interval} tuning requirement & Dylan / Ryan \\
+2 & Single-sample vs burst payload & Determines whether burst pipeline path must be implemented & Dylan / Ryan \\
+3 & TAI vs UTC in STM32 PTP stack & Must match historian server time source; epoch mismatch silently corrupts query time ranges & Dylan / Ryan \\
+4 & Grafana on same host or separate & Determines whether \texttt{localhost} InfluxDB binding holds or must be relaxed & Dylan \\
+5 & \texttt{sync\_state} as string or integer field & Affects Flux query complexity for PTP status panels in Grafana & Dylan \\
+6 & \texttt{min}/\texttt{max} downsampling required & Determines whether downsampling task requires three passes or one & Dylan / Geoff \\
+7 & Historian server hardware confirmed & Confirms Docker Compose deployment is viable; rules out resource contention & Dylan \\
+8 & 90-day raw retention vs disk capacity & Prevents historian running out of storage during thesis validation period & Dylan \\
+\hline
+\end{tabular}
+\end{table}

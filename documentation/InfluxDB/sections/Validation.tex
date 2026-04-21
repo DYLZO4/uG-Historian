@@ -1,0 +1,56 @@
+\section{Validation Approach}
+
+\subsection{Objectives}
+
+The validation approach verifies that the historian correctly receives, stores, and exposes PTP-timestamped measurements from the DAQ nodes. Three properties are of primary interest:
+
+\begin{itemize}[noitemsep]
+    \item \textbf{Correctness}: data written to InfluxDB matches the values published by the STM32 nodes
+    \item \textbf{Timestamp fidelity}: the PTP timestamp from the STM32 is preserved end-to-end with no substitution or modification
+    \item \textbf{Cross-node alignment}: points from two synchronised nodes at the same physical instant share consistent timestamps within the expected PTP accuracy bound
+\end{itemize}
+
+\subsection{Component-Level Tests}
+
+Before end-to-end validation, each pipeline stage is verified in isolation.
+
+\begin{table}[H]
+\centering
+\caption{Component-Level Validation Tests}
+\begin{tabular}{lp{0.3\linewidth}p{0.3\linewidth}}
+\hline
+\textbf{Test} & \textbf{Method} & \textbf{Pass condition} \\
+\hline
+Telegraf MQTT subscription  & Publish a known payload with \texttt{mosquitto\_pub}; inspect Telegraf logs & Payload parsed, point written to \texttt{telemetry} bucket \\
+Timestamp preservation      & Publish payload with known \texttt{ts} value; query InfluxDB and compare & Stored timestamp matches \texttt{ts} to nanosecond precision \\
+Tag extraction              & Publish to a known topic; query tags on the stored point & \texttt{node\_id} and \texttt{measurement} tags match topic segments \\
+Subsystem routing           & Publish to \texttt{voltage} and \texttt{current} topics; query both measurements & Points land in correct InfluxDB measurements \\
+Downsampling task           & Write synthetic data spanning $>$1 minute; trigger task manually & \texttt{telemetry\_1m} contains \texttt{v\_mean}, \texttt{v\_min}, \texttt{v\_max} for the window \\
+\hline
+\end{tabular}
+\end{table}
+
+\subsection{End-to-End Validation}
+
+End-to-end validation uses the two-node testbed with both STM32 nodes publishing live measurements.
+
+\textbf{Timestamp fidelity test:} A known electrical event (e.g.\ a step load change) is applied to the microgrid. The timestamp of the event as recorded in the historian for each node is compared. The difference should be within the expected PTP synchronisation accuracy (sub-microsecond on a switched Ethernet LAN). A large discrepancy indicates either a timestamp substitution error in the pipeline or a PTP synchronisation failure.
+
+\textbf{Data completeness test:} Both nodes publish at a known rate for a fixed duration. The number of points in the historian for each channel is compared against the expected count. Any gap is investigated against Telegraf and Mosquitto logs.
+
+\textbf{PTP status logging test:} The \texttt{ptp\_status} measurement is queried over a sustained period. The \texttt{sync\_state} field should remain \texttt{LOCKED} throughout normal operation, with \texttt{offset\_ns} stable within the sub-microsecond range.
+
+\subsection{Instrumentation}
+
+During validation, Telegraf's \texttt{influxdb\_internal} input plugin is enabled to expose pipeline metrics (including points received, write errors, and flush latency) into a separate \texttt{telegraf\_internal} bucket. This provides visibility into ingestion health without relying solely on application logs.
+
+\begin{lstlisting}[language=toml]
+[[inputs.internal]]
+  collect_memstats = false
+
+[[outputs.influxdb_v2]]
+  urls         = ["http://localhost:8086"]
+  token        = "${INFLUXDB_TOKEN}"
+  organization = "qut-microgrid"
+  bucket       = "telegraf_internal"
+\end{lstlisting}

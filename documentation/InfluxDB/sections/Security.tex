@@ -1,0 +1,74 @@
+\section{Security}
+
+\subsection{Posture}
+
+The historian operates on a university research lab LAN and is not exposed to the public internet. The security design is therefore pragmatic and aligned with the phased approach documented in the companion MQTT design document (\S7.3). This section describes historian-side measures only; broker-side authentication, ACLs, and TLS are covered in the MQTT design document.
+
+\subsection{InfluxDB Access Control}
+
+InfluxDB v2 uses token-based authentication for all API access. Two tokens are issued:
+
+\begin{table}[H]
+\centering
+\caption{InfluxDB API Tokens}
+\begin{tabular}{lll}
+\hline
+\textbf{Token} & \textbf{Scope} & \textbf{Used by} \\
+\hline
+Telegraf write token & Write--only to \texttt{telemetry} bucket & Telegraf bridge \\
+Admin token          & Full organisation access               & Local admin / ad--hoc Flux queries \\
+\hline
+\end{tabular}
+\end{table}
+
+The Telegraf write token is scoped to the minimum required permission: write access to the \texttt{telemetry} bucket only. It cannot read data, access other buckets, or modify organisation configuration. This limits the blast radius if the token is compromised.
+
+Tokens are stored as environment variables and injected into the Telegraf configuration at runtime via \texttt{\$\{INFLUXDB\_TOKEN\}}. They are never written to configuration files or committed to version control.
+
+\subsection{Network Binding}
+
+The InfluxDB HTTP API is bound to loopback (\texttt{localhost:8086}) only and is not reachable from the lab LAN directly. All access from Telegraf and Grafana is local to the historian server. This is enforced at the InfluxDB configuration level:
+
+\begin{lstlisting}[language=toml]
+# /etc/influxdb/config.toml
+http--bind--address = "127.0.0.1:8086"
+\end{lstlisting}
+
+\subsection{Grafana Authentication}
+
+Grafana is deployed with local authentication enabled. A minimum of two accounts are provisioned:
+
+\begin{table}[H]
+\centering
+\caption{Grafana User Accounts}
+\begin{tabular}{lll}
+\hline
+\textbf{Account} & \textbf{Role} & \textbf{Purpose} \\
+\hline
+\texttt{admin}  & Admin  & Dashboard and data source configuration \\
+\texttt{viewer} & Viewer & Read--only dashboard access for demonstration \\
+\hline
+\end{tabular}
+\end{table}
+
+Anonymous access is disabled. The Grafana InfluxDB data source is configured with a dedicated read--only token. It does not use the admin token.
+
+\subsection{Future Hardening}
+
+Consistent with the MQTT design's phased security model, the following measures are deferred but noted:
+
+\begin{table}[H]
+\centering
+\caption{Deferred Security Measures}
+\begin{tabular}{ll}
+\hline
+\textbf{Measure} & \textbf{Trigger} \\
+\hline
+TLS on InfluxDB API (\texttt{https://})  & If historian is accessed from outside the lab VLAN \\
+Grafana OAuth / SSO                      & If multi--user access beyond the research team is required \\
+InfluxDB audit logging                   & If data integrity evidence is required for thesis examination \\
+\hline
+\end{tabular}
+\end{table}
+
+

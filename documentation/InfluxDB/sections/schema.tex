@@ -1,0 +1,108 @@
+\section{Schema \& Data Model}
+InfluxDB organises data as:
+\begin{center}
+Organisation --> bucket --> Measurement --> Tags + Field + Timestamp
+\end{center}
+
+\subsection{Organisation}
+A single InfluxDB organisation \texttt{qut-microgrid} is used, consistent with the Telegraf output configuration in the MQTT design document.
+
+\subsection{Buckets}
+
+\begin{table}[H]
+  \caption{Buckets}
+  \begin{center}
+    \begin{tabular}{lll}
+      \hline
+      \textbf{Bucket} & \textbf{Purpose} & \textbf{Retention} \\
+      \hline
+      \texttt{telemetry} & Full--resolution samples from all nodes & 90 days (TBD) \\
+      \texttt{telemetry\_1m} & 1--minute aggregates for long-term storage & Indefinite \\
+      \hline
+    \end{tabular}
+  \end{center}
+\end{table}
+
+The bucket name \texttt{telemetry} matches the Telegraf output configuration. A seperate downsampled bucket avoids data retention growth while preserving long--term trend visibility. 
+      
+\subsection{Measurements}
+Each MQTT subsystem segment maps to a distinct InfluxDB measurement name:
+
+\begin{table}[H]
+  \caption{Measuremnts}
+  \begin{center}
+    \begin{tabular}{ll}
+      \hline
+      \textbf{Measurement} & \textbf{Description}\\
+      \hline
+      \texttt{voltage} & Phase voltage samples (V) \\
+      \texttt{current} & Phase and neutral current samples (A) \\
+      \texttt{status} & Node liveness and heartbeat dignostics \\
+      \texttt{ptp\_status} & PTP synchronisation diagnostics \\
+      \hline
+    \end{tabular}
+  \end{center}
+\end{table}
+
+Additional subsystems may be introduced without structural schema changes if the STM32 firmware is extended to publish derived quantities.
+
+\subsection{Tags}
+Tags are string--valued, indexed, and low--cardinality. All three tags are populated automatically by Telegraf's \texttt{topic\_parsing} from the four--level MQTT topic hierachy. 
+
+\begin{table}[H]
+  \caption{Tags}
+  \begin{center}
+    \begin{tabular}{llp{0.2\linewidth}p{0.4\linewidth}}
+      \hline
+      \textbf{Tag Key} & \textbf{Source} & \textbf{Example Values} & \textbf{Notes}\\
+      \hline
+      \texttt{node\_id} & Topic segment 2 & \texttt{node\_1}, \texttt{node\_2} & Fixed at firmware flash time, MAC/IP addresses explicitly avoided. \\
+      \texttt{measurement} & Topic segment 4 & \texttt{va}, \texttt{ib} & Aligned with IEEE-1459-2010 notation \\
+      \hline
+    \end{tabular}
+  \end{center}
+\end{table}
+
+\subsection{Fields}
+\begin{table}[H]
+  \caption{Tags}
+  \begin{center}
+    \begin{tabular}{lllp{0.5\linewidth}}
+      \hline
+      \textbf{Field Key} & \textbf{Type} & \textbf{Source} & \textbf{Units}\\
+      \hline
+      \texttt{v} & float64 & JSON payload \texttt{v} field & implied by \texttt{\_measurement} and \texttt{measurement} tag (V or A) \\
+      \hline
+    \end{tabular}
+  \end{center}
+\end{table}
+
+\subsection{Timestamp}
+Timestamps are written at nanosecond precision using the \texttt{ts} field from the JSON payload, sourced from the STM32 IEEE 1588 hardware timestamping peripheral. The historian does not substitute broker receive time or Telegraf processing time: the node--reported PTP timestamp is authoritative end--to--end.
+
+\subsection{Representative Schema}
+\begin{table}[H]
+  \caption{Representative Schema}
+  \begin{center}
+    \begin{tabular}{lllll}
+      \hline
+      \textbf{subsystem (\_measurement)} & \textbf{node\_id} & \textbf{measurement} & \textbf{\_field} & \textbf{Example Value}\\
+      \hline
+      \texttt{voltage} & \texttt{node\_1} & \texttt{va} & \texttt{v} & \\
+      \texttt{voltage} & \texttt{node\_1} & \texttt{vb} & \texttt{v} & \\
+      \texttt{voltage} & \texttt{node\_1} & \texttt{vc} & \texttt{v} & \\
+      \texttt{current} & \texttt{node\_1} & \texttt{ia} & \texttt{v} & \\
+      \texttt{current} & \texttt{node\_1} & \texttt{ib} & \texttt{v} & \\
+      \texttt{current} & \texttt{node\_1} & \texttt{ic} & \texttt{v} & \\
+      \texttt{ptp\_status} & \texttt{node\_1} & \texttt{offset\_ns} & \texttt{v} & \\
+      \hline
+    \end{tabular}
+  \end{center}
+\end{table}
+
+
+
+
+
+
+

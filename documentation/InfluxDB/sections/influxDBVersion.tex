@@ -1,0 +1,14 @@
+\section{InfluxDB Version Selection}
+InfluxDB v2 OSS is selected as the historian for this project. The justification centres on four properties that are directly required by the system design.
+
+Flux query language and native task scheduling. The downsampling design in §7.2 relies on Flux scheduled tasks running aggregateWindow directly within the database, with no external processing component. InfluxDB v2 is the only version for which Flux is the primary, fully--supported query interface. The integrated task scheduler eliminates the need for an external Kapacitor instance, keeping the Docker Compose stack minimal and operationally simple, appropriate for a single--historian research testbed.
+
+Telegraf influxdb\_v2 output plugin. The ingestion pipeline is entirely configuration--driven via Telegraf's mqtt\_consumer input and influxdb\_v2 output plugin. This plugin (including the json\_time\_key, json\_time\_format = "unix\_ns", and topic\_parsing features central to this design) is a first--class, mature integration with InfluxDB v2, with extensive documentation and community usage. No custom subscriber code is required.
+
+Token-based access control. InfluxDB v2's token--based authentication model supports bucket--scoped write tokens, which is the basis of the security posture in §9.2. The Telegraf bridge holds a write--only token scoped to the telemetry bucket; Grafana holds a separate read--only token. This fine--grained token model is native to v2.
+
+Grafana Flux data source. Grafana's native Flux data source for InfluxDB v2 is stable and well--supported, enabling the dashboard panels described in §7.4 to query the historian directly using the same Flux patterns used in the downsampling tasks.
+
+Relationship to InfluxDB 3 Core. InfluxDB 3 Core reached general availability in April 2025.  However, InfluxDB 3 Core is not positioned as a direct replacement for InfluxDB OSS v2, and v2 is not planned to reach end--of--life. The v3 architecture is a significant departure — it replaces Flux with native SQL and InfluxQL, and integrates a Python processing engine in place of the Kapacitor/task model used in v2.  Migrating to v3 would require rewriting all Flux queries and tasks documented here, with no clear benefit at this testbed scale. InfluxDB v2 OSS therefore remains the appropriate and supported choice for a new deployment of this scope.
+
+Docker image pinning note: The latest tag for InfluxDB Docker images will point to InfluxDB 3 Core from late May 2026 onward.  The Compose file in §10.2 uses the explicit influxdb:2 tag to prevent an unintended upgrade during the thesis validation period. This must not be changed to latest.

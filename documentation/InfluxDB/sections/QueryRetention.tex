@@ -1,0 +1,105 @@
+\section{Query \& Retention Policies}
+\subsection{Retention Design}
+Retention is configured at the bucket level in InfluxDB v2. No retention policy is applied within a bucket; the bucket-level setting is the sole retention mechanism.
+
+\begin{table}[H]
+  \caption{Measuremnts}
+  \begin{center}
+    \begin{tabular}{lll}
+      \hline
+      \textbf{Bucket} & \textbf{Telemetry} & \textbf{Rationale}\\
+      \hline
+      \texttt{telemetry} & 90 days & Covers the active thesis validation period at full resolution \\
+      \texttt{telemetry\_1m} & Indefinite & Long--term aggregate data for reporting and trend analysis \\
+      \hline
+    \end{tabular}
+  \end{center}
+\end{table}
+
+\subsection{Downsampling Task}
+A Flux scheduled task aggregates telemetry into telemetry\_1m at 1--minute intervals. mean, min, and max are stored as separate fields to support both trend analysis and power quality event detection within each window.
+
+\begin{lstlisting}[language=flux]
+option task = {name: "downsample_1m", every: 1m}
+
+from(bucket: "telemetry")
+  |> range(start: -task.lastSuccessTime)
+  |> filter(fn: (r) => r._field == "v")
+  |> aggregateWindow(every: 1m, fn: mean, createEmpty: false)
+  |> set(key: "_field", value: "v_mean")
+  |> to(bucket: "telemetry_1m")
+
+from(bucket: "telemetry")
+  |> range(start: -task.lastSuccessTime)
+  |> filter(fn: (r) => r._field == "v")
+  |> aggregateWindow(every: 1m, fn: min, createEmpty: false)
+  |> set(key: "_field", value: "v_min")
+  |> to(bucket: "telemetry_1m")
+
+from(bucket: "telemetry")
+  |> range(start: -task.lastSuccessTime)
+  |> filter(fn: (r) => r._field == "v")
+  |> aggregateWindow(every: 1m, fn: max, createEmpty: false)
+  |> set(key: "_field", value: "v_max")
+  |> to(bucket: "telemetry_1m")
+\end{lstlisting}
+
+\subsection{Key Query Parameters}
+The following Flux examples cover the primary query patterns anticipated during validation.
+
+Time-window data for a single channel:
+\begin{lstlisting}[language=flux]
+from(bucket: "telemetry")
+  |> range(start: -1h)
+  |> filter(fn: (r) => r._measurement == "voltage"
+                    and r.node_id == "node_1"
+                    and r.measurement == "va")
+\end{lstlisting}
+
+Cross-node comparison for the same channel:
+\begin{lstlisting}[language=flux]
+from(bucket: "telemetry")
+  |> range(start: -1h)
+  |> filter(fn: (r) => r._measurement == "voltage"
+                    and r.measurement == "va")
+  |> group(columns: ["node_id"])
+\end{lstlisting}
+
+Cross--node comparisons are only meaningful where PTP synchronisation is confirmed locked. The ptp\_status measurement should be checked before drawing cross--node conclusions from the historian.
+
+All channels from a single node (debugging):
+\begin{lstlisting}[language=flux]
+from(bucket: "telemetry")
+  |> range(start: -15m)
+  |> filter(fn: (r) => r.node_id == "node_1")
+\end{lstlisting}
+
+
+PTP synchronisation quality over a window:
+\begin{lstlisting}[language=flux]
+from(bucket: "telemetry")
+  |> range(start: -1h)
+  |> filter(fn: (r) => r._measurement == "ptp_status"
+                    and r.node_id == "node_1")
+\end{lstlisting}
+
+\subsection{Grafana Integration}
+Grafana is a confirmed thesis deliverable. Grafana connects to InfluxDB v2 via the native Flux data source. Key dashboard panels anticipated:
+
+\begin{table}[H]
+  \caption{Measuremnts}
+  \begin{center}
+    \begin{tabular}{lll}
+      \hline
+      \textbf{Panel} & \textbf{Source Bucket} & \textbf{Query Pattern}\\
+      \hline
+      Per--phase voltage time--series & telemetry & Single--Channel, cross--node \\
+      Per--phase current time--series & telemetry & Single--Channel, cross--node \\
+      PTP offset over time (per node) & telemetry & ptp\_status measurement \\
+      1--minute voltage mean/min/max & telemetry\_1m & Single--Channel, cross--node \\
+      \hline
+    \end{tabular}
+  \end{center}
+\end{table}
+Grafana dashboard design is out of scope for this document and will be addressed in a separate deliverable.
+

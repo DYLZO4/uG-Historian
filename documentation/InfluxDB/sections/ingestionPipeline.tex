@@ -1,0 +1,68 @@
+\section{Ingestion Pipeline}
+
+\subsection{Overview}
+
+The ingestion pipeline is fully configuration--driven via Telegraf's MQTT consumer input plugin and InfluxDB v2 output plugin. No custom subscriber code is required for the single--sample payload path. Telegraf is co--deployed on the historian server alongside the Mosquitto and InfluxDB. 
+
+\subsection{Telegraf Configuration}
+\begin{lstlisting}[language = toml]
+[[inputs.mqtt_consumer]]
+  servers     = ["tcp://localhost:1883"]
+  topics      = ["microgrid/#"]
+  username    = "telegraf"
+  password    = "${TELEGRAF_MQTT_PASSWORD}"
+  qos         = 0
+  data_format = "json"
+  json_time_key    = "ts"
+  json_time_format = "unix_ns"
+
+  [[inputs.mqtt_consumer.topic_parsing]]
+    topic       = "microgrid/<node_id>/<subsystem>/<measurement>"
+    tags        = "_/<node_id>/_/<measurement>"
+    measurement = "_/_/<subsystem>/_"
+
+[[outputs.influxdb_v2]]
+  urls         = ["http://localhost:8086"]
+  token        = "${INFLUXDB_TOKEN}"
+  organization = "qut-microgrid"
+  bucket       = "telemetry"
+\end{lstlisting}
+Note:
+\begin{itemize}
+  \item \texttt{json\_time\_key \= "ts"} and \texttt{json\_time\_format \= "unix\_ns"} instructs Telegraph to use the STM32 PTP timestamp as the InfluxDB point timestamp verbatim. Telegraf processing trime is never substituted.
+  \item \texttt{topic\_parsing} extracts \texttt{node\_id} and \texttt{measurement} as tags. The \texttt{subsystem} segment drives the InfluxDB measurement name via the \texttt{measurement} key. The leading \texttt{microgrid} segment is ignored. 
+  \item Credentials are injected via environment variables and are never stored in the config files, consistent with the MQTT design security posture. 
+\end{itemize}
+
+\subsection{Single--Sample Payload Path}
+For the single-sample payload \texttt{\{"ts": <unix\_ns>, "v": <float>\}}, Telegraf requires no transformation. The \texttt{v} field maps directly to the \texttt{\_field} column and the timestamp is extracted from \texttt{ts}. This path is fully supported by the native Telegraf JSON parser with zero custom logic.
+
+\subsection{Burst Payload Path}
+The burst payload format \texttt{(\{"ts": <unix\_ns>, "dt": <seconds>, "v": [...]\})}, defined in the MQTT design, is not natively handled by Telegraf's JSON parser: it cannot reconstruct per-sample timestamps from a \texttt{ts} + \texttt{dt} + array structure.
+
+\subsection{Write Batching}
+\begin{table}[H]
+  \caption{Write Batching}
+  \begin{center}
+    \begin{tabular}{lll}
+      \hline
+      \textbf{Parameter} & \textbf{Default} & \textbf{Notes} \\
+      \hline
+      \texttt{metric\_batch\_size} & 1000 points & Maximum points per write request \\
+      \texttt{flush\_interval} & 10s & Maximum time between flushes \\
+      \hline
+    \end{tabular}
+  \end{center}
+\end{table}
+For a two-node, 6–8 channel testbed at modest sample rates these defaults are conservative. If near-real-time dashboard visibility is required, flush\_interval should be reduced to 1s. This is a runtime tuning decision and does not affect the schema or pipeline architecture.
+
+\subsection{QoS Alignment}
+Telemetry samples are published at QoS 0, consistent with the MQTT design. The ingestion pipeline makes no attempt to detect or fill gaps in the historian record resulting from dropped packets or node disconnection. Gaps are visible in the historian and are acceptable for a research testbed.
+
+\subsection{Error Handling}
+Telegraf drops malformed payloads that fail JSON parsing and logs an error. No dead-letter queue is implemented. This is acceptable given:
+\begin{itemize}[noitemsep]
+  \item The two-node testbed operates on a wired LAN with low packet loss probability
+  \item Telemetry samples are QoS 0 by design — loss is already tolerated at the transport layer
+  \item A dead-letter mechanism would add operational complexity disproportionate to the research context
+\end{itemize}
