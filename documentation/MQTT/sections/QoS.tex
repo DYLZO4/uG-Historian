@@ -31,7 +31,7 @@ The MQTT retained message flag instructs the broker to store the most recent mes
     \textbf{Topic} & \textbf{Retained} & \textbf{Rationale} \\
     \hline
     \texttt{microgrid/<node\_id>/status/heartbeat} & Yes & New subscribers immediately see current node liveness without waiting for the next publish. \\
-    \texttt{microgrid/<node\_id>/status/heartbeat} & Yes & Current node configuration is available to sbscribe on connect. \\ 
+    \texttt{microgrid/<node\_id>/status/config} & Yes & Current node configuration is available to sbscribe on connect. \\ 
     All telemetry topics & No & Retaining high--frequency samples causes a burst of stale data delivered to every new subscriber connection. \\
     \hline
     \end{tabular}

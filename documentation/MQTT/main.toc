@@ -9,7 +9,6 @@
 \contentsline {subsection}{\numberline {5.1}Format Selection}{4}{}%
 \contentsline {subsection}{\numberline {5.2}Single-Sample Payload}{4}{}%
 \contentsline {subsection}{\numberline {5.3}Burst Payloads}{5}{}%
-\contentsline {subsection}{\numberline {5.4}Single-Sample Payload}{5}{}%
 \contentsline {section}{\numberline {6}Quality of Service Levels \& Retained Messages}{5}{}%
 \contentsline {subsection}{\numberline {6.1}Quality of Service Strategy}{5}{}%
 \contentsline {subsection}{\numberline {6.2}Retained Messages}{6}{}%

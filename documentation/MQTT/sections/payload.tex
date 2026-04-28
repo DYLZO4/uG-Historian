@@ -5,7 +5,7 @@ Payloads are serialised as UTF-8 JSON. This prioritises developer ergonomics and
 \subsection{Single-Sample Payload}
 \begin{lstlisting}[language=json]
   {
-    "ts": 1713400000.123456,
+    "ts": 1713400000123456000,
     "v": 231.45
   }
 \end{lstlisting}
@@ -17,7 +17,7 @@ Payloads are serialised as UTF-8 JSON. This prioritises developer ergonomics and
     \hline
     \textbf{Field} & \textbf{Type} & \textbf{Description} \\
     \hline
-    \texttt{ts} & float64 & PTP-synchronised Unix timestamp (fractional seconds) sourced from the STM32 IEEE 1588 hardware clock \\
+    \texttt{ts} & uint64 & PTP-synchronised Unix timestamp (fractional seconds) sourced from the STM32 IEEE 1588 hardware clock \\
     \texttt{v} & float32 & Measurement value in SI units \\
     \hline
     \end{tabular}
@@ -30,10 +30,9 @@ Units are implied by the topic rather than included in the payload. For example,
 \subsection{Burst Payloads}
 For high-frequency acquisition where per-message overhead is a concern, multiple samples may be batched into a single publish:
 
-\subsection{Single-Sample Payload}
 \begin{lstlisting}[language=json]
   {
-    "ts": 1713400000.000000,
+    "ts": 1713400000123456000,
     "dt": 0.000312,
     "v":  [231.45, 231.47, 231.43, 231.50]
   }

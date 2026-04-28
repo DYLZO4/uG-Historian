@@ -27,7 +27,7 @@ log_type warning
 log_type notice
 \end{lstlisting}  
 
-Port 1884 is used for internal lab LAN traffic. TLS on port 8883 is reserved as a future hardening measure and discussed in section X. Persistence is enabled so that QoS 1 messages survive a broker restart without loss. The \texttt{max\_inflight\_messages} and \texttt{max\_queued\_messages} parameters are bounded to prevent unbounded memory growth under a backlogged subscriber.
+Port 1883 is used for internal lab LAN traffic. TLS on port 8883 is reserved as a future hardening measure and discussed in section X. Persistence is enabled so that QoS 1 messages survive a broker restart without loss. The \texttt{max\_inflight\_messages} and \texttt{max\_queued\_messages} parameters are bounded to prevent unbounded memory growth under a backlogged subscriber.
 
 
 

@@ -44,11 +44,11 @@ Telegraf with the MQTT consumer input plugin is used as the historian bridge. Th
   qos         = 0
   data_format = "json"
   json_time_key    = "ts"
-  json_time_format = "unix"
+  json_time_format = "unix_ns"
 
   [[inputs.mqtt_consumer.topic_parsing]]
     topic = "microgrid/<node_id>/<subsystem>/<measurement>"
-    tags  = "_/<node_id>/<subsystem>/<measurement>"
+    tags  = "_/<node_id>/_/<measurement>"
 
 [[outputs.influxdb_v2]]
   urls         = ["http://localhost:8086"]
