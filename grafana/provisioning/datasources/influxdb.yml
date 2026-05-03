@@ -1,0 +1,16 @@
+apiVersion: 1
+
+datasources:
+  - name: InfluxDB (Flux)
+    type: influxdb
+    access: proxy
+    url: http://influxdb:8086
+    jsonData:
+      version: Flux
+      organization: qut-microgrid
+      defaultBucket: telemetry
+    secureJsonData:
+      token: ${INFLUXDB_TOKEN}
+    isDefault: true
+    editable: true
+
