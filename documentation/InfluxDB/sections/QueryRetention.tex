@@ -89,8 +89,8 @@ Grafana connects to InfluxDB v2 via the native Flux data source. Both the data s
       Status & Online if the node's newest point in \texttt{telemetry} or \texttt{waveform} is less than 30~s old \\
       Average power and power factor & Mean of the \texttt{power} fields for the selected phase over the last 10 complete seconds \\
       PTP state & From the newest servo status: \textit{locked} (firmware lock flag), \textit{tracking} (PI loop running with an offset within 100~\textmu s), or \textit{unlocked} \\
-      Completeness & Frames stored over frames acquired in the last minute, from the \texttt{daq2\_packet} frame indices \\
-      Power & Real and apparent power for the selected phase, per second \\
+      Completeness & Frames stored over frames acquired in the minute ending 5~s ago, from the \texttt{daq2\_packet} frame indices; the newest seconds are excluded because \texttt{daq2-ingest}'s writer threads can store batches out of order \\
+      Power & Real and apparent power for the selected phase, per second, on one shared axis so that the gap between them shows the power factor \\
       Voltage and current & Per-phase RMS (root mean square of per-second RMS values) or peak (largest per-second absolute minimum or maximum), at display resolution \\
       Full-rate waveforms & The newest 100~ms that all three phases have reached in \texttt{waveform}, plotted against milliseconds so the axis fits the window \\
       PTP row & Offset, path delay and frequency correction from \texttt{ptp\_status}, one point per Sync, and the firmware's sample-timing uncertainty \\

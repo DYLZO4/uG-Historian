@@ -393,7 +393,7 @@
             "type": "influxdb",
             "uid": "PF6CD3C7EE64CF7D1"
           },
-          "query": "import \"array\"\nreceived = (from(bucket: \"waveform\")\n  |> range(start: -1m)\n  |> filter(fn: (r) => r._measurement == \"daq2_packet\" and r.node_id == \"${node_id}\" and r._field == \"frames\")\n  |> sum()\n  |> findRecord(fn: (key) => true, idx: 0))._value\nlo = (from(bucket: \"waveform\")\n  |> range(start: -1m)\n  |> filter(fn: (r) => r._measurement == \"daq2_packet\" and r.node_id == \"${node_id}\" and r._field == \"first_index\")\n  |> min()\n  |> findRecord(fn: (key) => true, idx: 0))._value\nhi = (from(bucket: \"waveform\")\n  |> range(start: -1m)\n  |> filter(fn: (r) => r._measurement == \"daq2_packet\" and r.node_id == \"${node_id}\" and r._field == \"first_index\")\n  |> max()\n  |> findRecord(fn: (key) => true, idx: 0))._value + (from(bucket: \"waveform\")\n  |> range(start: -1m)\n  |> filter(fn: (r) => r._measurement == \"daq2_packet\" and r.node_id == \"${node_id}\" and r._field == \"frames\")\n  |> last()\n  |> findRecord(fn: (key) => true, idx: 0))._value\narray.from(rows: [{_value: 100.0 * float(v: received) / float(v: hi - lo)}])"
+          "query": "import \"array\"\nreceived = (from(bucket: \"waveform\")\n  |> range(start: -65s, stop: -5s)\n  |> filter(fn: (r) => r._measurement == \"daq2_packet\" and r.node_id == \"${node_id}\" and r._field == \"frames\")\n  |> sum()\n  |> findRecord(fn: (key) => true, idx: 0))._value\nlo = (from(bucket: \"waveform\")\n  |> range(start: -65s, stop: -5s)\n  |> filter(fn: (r) => r._measurement == \"daq2_packet\" and r.node_id == \"${node_id}\" and r._field == \"first_index\")\n  |> min()\n  |> findRecord(fn: (key) => true, idx: 0))._value\nhi = (from(bucket: \"waveform\")\n  |> range(start: -65s, stop: -5s)\n  |> filter(fn: (r) => r._measurement == \"daq2_packet\" and r.node_id == \"${node_id}\" and r._field == \"first_index\")\n  |> max()\n  |> findRecord(fn: (key) => true, idx: 0))._value + (from(bucket: \"waveform\")\n  |> range(start: -65s, stop: -5s)\n  |> filter(fn: (r) => r._measurement == \"daq2_packet\" and r.node_id == \"${node_id}\" and r._field == \"frames\")\n  |> last()\n  |> findRecord(fn: (key) => true, idx: 0))._value\narray.from(rows: [{_value: 100.0 * float(v: received) / float(v: hi - lo)}])"
         }
       ],
       "fieldConfig": {
@@ -439,7 +439,7 @@
         "justifyMode": "center",
         "orientation": "auto"
       },
-      "description": "Data completeness: frames stored in InfluxDB as a share of frames the node acquired over the last minute, from the packet frame indices."
+      "description": "Data completeness: frames stored in InfluxDB as a share of frames the node acquired over the minute to 5 s ago, from the packet frame indices."
     },
     {
       "id": 1,
@@ -477,22 +477,9 @@
           "color": {
             "mode": "palette-classic"
           },
-          "unit": "watt"
+          "unit": "si:W / VA"
         },
-        "overrides": [
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "Apparent power (S)"
-            },
-            "properties": [
-              {
-                "id": "unit",
-                "value": "voltamp"
-              }
-            ]
-          }
-        ]
+        "overrides": []
       },
       "options": {
         "legend": {

@@ -156,8 +156,8 @@ Both are provisioned from `grafana/provisioning/`, so there's nothing to set up 
 
 | Part | What it shows |
 |------|---------------|
-| Top boxes | **Status**: online if its newest point is under 30 s old. **Avg power (10 s)** and **PF** (power factor) for the selected phase. **PTP**: *locked* (within 1 µs for 8 Syncs, needed for cross-node comparisons), *tracking* (servo running, within 100 µs) or *unlocked*. **Completeness**: frames stored as a share of frames the node acquired in the last minute. |
-| Power | Real power P and apparent power S for the selected phase, per second |
+| Top boxes | **Status**: online if its newest point is under 30 s old. **Avg power (10 s)** and **PF** (power factor) for the selected phase. **PTP**: *locked* (within 1 µs for 8 Syncs, needed for cross-node comparisons), *tracking* (servo running, within 100 µs) or *unlocked*. **Completeness**: frames stored as a share of frames the node acquired over the minute ending 5 s ago (the newest seconds are skipped because the writer threads can store batches out of order). |
+| Power | Real power P and apparent power S for the selected phase, per second, on one shared axis so the gap between them shows the power factor |
 | Voltage / Current | RMS or peak, per second. Voltages are phase-to-earth with the default shield profile. |
 | Full-rate waveform | The newest ~100 ms of voltage and current at ~30 kHz. Ignores the dashboard time range. |
 | PTP | Offset from the grandmaster, path delay, frequency correction (one point per Sync), and the firmware's sample-timing uncertainty |
@@ -358,6 +358,13 @@ docker run --rm --network ug-historian_default -v "$PWD/daq2-ingest":/app -w /ap
 
 The load test writes to nodes `load_01`/`load_02`, which stay in the buckets until retention expires.
 
+Demo data: `tests/mock_node.py` publishes one realistic node (three-phase 230 V supply feeding a small commercial board, with PTP servo status) for screenshots and demos. `--steady fridge,pump` holds a constant load; leave it out for appliances switching on and off with motor inrush (the load model is `tests/feeder.py`). `--backfill 600` first publishes 10 minutes of history at twice real time. Use `--tai-utc-offset 0` against a grandmaster that sends UTC (the home ptp4l setup).
+
+```bash
+docker run --rm --network ug-historian_default -v "$PWD/daq2-ingest":/app -w /app -e PYTHONPATH=/app \
+  python:3.12-slim sh -c "pip install -q -r requirements.txt && python tests/mock_node.py --host mosquitto --node node_02 --backfill 600 --steady fridge,pump"
+```
+
 ---
 
 ## Accessing the InfluxDB UI
@@ -427,6 +434,6 @@ docker compose up -d
 ├── daq2-ingest/                               # full-rate DAQ2 decoder service (Python)
 │   ├── daq2.py                                # packet decoding, line protocol, 1 s aggregates
 │   ├── ingest.py                              # MQTT subscriber and batched InfluxDB writer
-│   └── tests/                                 # unit tests and a full-rate load generator
+│   └── tests/                                 # unit tests, a full-rate load generator, a demo node
 └── documentation/                             # MQTT and InfluxDB design docs (LaTeX)
 ```
