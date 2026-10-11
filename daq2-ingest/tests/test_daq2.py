@@ -86,8 +86,8 @@ def test_second_aggregator_rms_and_boundaries():
         p = daq2.decode(packets.build(packets.sine_block(index, 64), t, first_index=index))
         out += agg.add(p, TAI)
         index += 64
-    # Two complete seconds, each with a voltage and a current line
-    assert len(out) == 4
+    # Two complete seconds, each with voltage, current and power lines
+    assert len(out) == 6
     v = [l for l in out if l.startswith("voltage,")][0]
     fields = dict(kv.split("=") for kv in v.split(" ")[1].split(","))
     assert abs(float(fields["a_rms"]) - 230) < 0.5
@@ -219,3 +219,49 @@ def test_router_balances_nodes_and_keeps_them_in_place():
     assert sorted(first[:4]) == [0, 1, 2, 3]            # one each before any doubles up
     assert max(r.counts) - min(r.counts) <= 1
     assert [r.worker(f"node_{n:02d}") for n in range(5)] == first   # sticky
+
+
+SLOT_S = packets.RANK_TICKS / packets.TIMER_HZ   # current sampled one ADC slot after voltage
+
+
+def one_second_power(phi, *, gap_after_packet=None):
+    """Feeds just over a second of three-phase data with the current lagging by phi, sampled with
+    the firmware's slot delay; returns the first complete second's power fields."""
+    agg = daq2.SecondAggregator("node_01")
+    out, index, n = [], 0, 0
+    while index < 30048 + 128:
+        t = T0 + ((index * packets.period_q32()) >> 32)
+        block = packets.sine_block(index, 64, current_lag_s=SLOT_S, current_phase_rad=phi)
+        out += agg.add(daq2.decode(packets.build(block, t, first_index=index)), TAI)
+        index += 64
+        n += 1
+        if gap_after_packet is not None and n == gap_after_packet:
+            index += 64                                    # one packet lost
+    line = [l for l in out if l.startswith("power,")][0]
+    return {k: float(v.rstrip("i")) for k, v in (kv.split("=") for kv in line.split(" ")[1].split(","))}
+
+
+@pytest.mark.parametrize("phi_deg", [0, 60])
+def test_power_matches_theory(phi_deg):
+    f = one_second_power(math.radians(phi_deg))
+    p_expected = 2300 * math.cos(math.radians(phi_deg))   # 230 V x 10 A per phase
+    for ph in "abc":
+        assert f[f"p_{ph}"] == pytest.approx(p_expected, rel=5e-4, abs=0.5)
+        assert f[f"s_{ph}"] == pytest.approx(2300, rel=5e-4)
+        assert f[f"pf_{ph}"] == pytest.approx(math.cos(math.radians(phi_deg)), abs=5e-4)
+    assert f["p_total"] == pytest.approx(3 * p_expected, rel=5e-4, abs=1.5)
+
+
+def test_slot_delay_correction_matters():
+    # Without interpolation the 16.64 us current lag would add 0.3 deg: ~0.9% low at PF 0.5
+    phi = math.radians(60)
+    uncorrected = 2300 * math.cos(phi + 2 * math.pi * 50 * SLOT_S)
+    corrected = one_second_power(phi)["p_a"]
+    assert abs(corrected - 1150) < 0.1 * abs(uncorrected - 1150)
+    assert abs(uncorrected - 1150) / 1150 > 0.008
+
+
+def test_power_skips_only_the_frame_after_a_gap():
+    with_gap = one_second_power(0.0, gap_after_packet=10)
+    assert with_gap["frames"] in (30048 - 64 - 1, 30047 - 64 - 1)   # lost packet, plus 1 frame
+    assert with_gap["p_a"] == pytest.approx(2300, rel=5e-4)

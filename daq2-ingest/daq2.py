@@ -149,8 +149,42 @@ def packet_line(packet, node_id, tai_utc_offset_ns):
             f"config_epoch={packet.config_epoch}i,uncertainty_ns={packet.uncertainty_ns}i {t}")
 
 
+PHASES = (("a", VA, IA), ("b", VB, IB), ("c", VC, IC))
+
+
+def currents_at_voltage_time(packet, prev_current, prev_index):
+    """Each frame's phase currents interpolated to that frame's voltage sampling instant.
+
+    Each ADC samples its voltage and then its current one scan slot later (16.64 us at the default
+    timing), so a current sample lags its voltage. Frame k's voltage time lies between frame k-1's
+    and frame k's current samples; interpolating linearly between them removes the lag (0.3 deg at
+    50 Hz, a ~0.9% real-power error at a 0.5 power factor). Frame 0 needs the previous packet's
+    last currents, given as prev_current if prev_index shows it is the immediately preceding frame;
+    otherwise that frame's row is NaN.
+
+    Returns (voltages, currents) as float64 arrays of shape (frames, 3), or None if the packet
+    lacks a phase voltage or current.
+    """
+    vcols = [packet.column(v) for _, v, _ in PHASES]
+    icols = [packet.column(i) for _, _, i in PHASES]
+    if None in vcols or None in icols:
+        return None
+    v = packet.values[:, vcols].astype(np.float64)
+    i = packet.values[:, icols].astype(np.float64)
+    period_ns = packet.period_q32_ns / 2**32
+    alpha = (packet.offset_ns[icols[0]] - packet.offset_ns[vcols[0]]) / period_ns
+    contiguous = prev_current is not None and prev_index == packet.first_output_index - 1
+    first = prev_current if contiguous else np.full(3, np.nan)
+    i_prev = np.vstack([first, i[:-1]])
+    return v, (1.0 - alpha) * i + alpha * i_prev
+
+
 class SecondAggregator:
-    """Per-second RMS/mean/min/max for each channel of one node, aligned to UTC seconds.
+    """Per-second statistics for one node, aligned to UTC seconds.
+
+    For each channel: RMS, mean, min and max. For power (IEEE 1459 definitions, per phase and
+    total): real power P = mean(v * i), with each current interpolated to its voltage's sampling
+    instant; apparent power S = Vrms * Irms; and power factor P / S.
 
     A second is emitted once a frame from a later second arrives, so it covers every frame the
     node published for it. Packets from one node arrive in order (one TCP connection), so a second
@@ -161,13 +195,24 @@ class SecondAggregator:
         self.tag = escape_tag(node_id)
         self.current = None   # UTC second being accumulated
         self.acc = {}         # (measurement, field) -> [count, sum, sumsq, min, max]
+        self.vi_sum = np.zeros(3)   # sum of v * i per phase over frames with an interpolated i
+        self.vi_n = 0
         self.locked = True
+        self.prev_current = None    # last frame's currents, for interpolating across packets
+        self.prev_index = None
 
     def add(self, packet, tai_utc_offset_ns):
         """Adds a packet's frames; returns lines for any seconds completed by it."""
         out = []
         times = packet.frame_times(tai_utc_offset_ns)
         seconds = times // 1_000_000_000
+        pair = currents_at_voltage_time(packet, self.prev_current, self.prev_index)
+        if pair is not None:
+            v, i_at_v = pair
+            vi = v * i_at_v
+            have_vi = ~np.isnan(vi).any(axis=1)
+            self.prev_current = packet.values[-1, [packet.column(i) for _, _, i in PHASES]].astype(np.float64)
+            self.prev_index = packet.first_output_index + packet.frames - 1
         # Split the packet where the second changes; usually it doesn't, or does once
         edges = np.flatnonzero(np.diff(seconds)) + 1
         for chunk in np.split(np.arange(packet.frames), edges):
@@ -178,6 +223,7 @@ class SecondAggregator:
                 out.extend(self._emit())
             if self.current != sec:
                 self.current, self.acc, self.locked = sec, {}, True
+                self.vi_sum, self.vi_n = np.zeros(3), 0
             self.locked &= packet.locked
             for measurement, cols, _ in group_columns(packet):
                 block = packet.values[chunk][:, [c for c, _ in cols]].astype(np.float64)
@@ -190,7 +236,30 @@ class SecondAggregator:
                     else:
                         a[0] += len(x); a[1] += x.sum(); a[2] += (x * x).sum()
                         a[3] = min(a[3], x.min()); a[4] = max(a[4], x.max())
+            if pair is not None:
+                rows = vi[chunk][have_vi[chunk]]
+                self.vi_sum += rows.sum(axis=0)
+                self.vi_n += len(rows)
         return out
+
+    def _power_line(self, t):
+        """Per-phase and total P, S and PF for the second, or None without both V and I."""
+        rms = {}
+        for (measurement, field), (n, _s, ss, _lo, _hi) in self.acc.items():
+            rms[(measurement, field)] = np.sqrt(ss / n)
+        if not self.vi_n or any((m, f) not in rms for f, _, _ in PHASES for m in ("voltage", "current")):
+            return None
+        fields = []
+        p_total = s_total = 0.0
+        for k, (f, _, _) in enumerate(PHASES):
+            p = self.vi_sum[k] / self.vi_n
+            s = rms[("voltage", f)] * rms[("current", f)]
+            p_total += p; s_total += s
+            fields.append(f"p_{f}={p:.3f},s_{f}={s:.3f},pf_{f}={(p / s if s else 0.0):.4f}")
+        fields.append(f"p_total={p_total:.3f},s_total={s_total:.3f},"
+                      f"pf_total={(p_total / s_total if s_total else 0.0):.4f}")
+        return (f"power,node_id={self.tag} {','.join(fields)},frames={self.vi_n}i,"
+                f"locked={int(self.locked)}i {t}")
 
     def _emit(self):
         fields, frames = {}, {}
@@ -200,6 +269,10 @@ class SecondAggregator:
                 f"{field}_min={lo:.3f},{field}_max={hi:.3f}")
             frames[measurement] = n  # same for every field of a measurement
         t = self.current * 1_000_000_000
-        return [f"{m},node_id={self.tag} {','.join(f)},frames={frames[m]}i,"
-                f"locked={int(self.locked)}i {t}"
-                for m, f in fields.items()]
+        lines = [f"{m},node_id={self.tag} {','.join(f)},frames={frames[m]}i,"
+                 f"locked={int(self.locked)}i {t}"
+                 for m, f in fields.items()]
+        power = self._power_line(t)
+        if power:
+            lines.append(power)
+        return lines

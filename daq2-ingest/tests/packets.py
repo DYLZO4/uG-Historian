@@ -36,12 +36,21 @@ def build(values, first_time_ns, *, sequence=0, first_index=0, flags=daq2.FLAG_P
     return header + values.tobytes()
 
 
-def sine_block(first_index, frames, channels=6, hz=50.0, frame_rate=None):
-    """Three-phase 230 V / 10 A sine samples for frames starting at first_index."""
+def sine_block(first_index, frames, channels=6, hz=50.0, frame_rate=None, current_lag_s=0.0,
+               current_phase_rad=0.0):
+    """Three-phase 230 V / 10 A sine samples for frames starting at first_index.
+
+    current_lag_s delays when the current columns are sampled, as the firmware's second ADC slot
+    does (RANK_TICKS / TIMER_HZ). current_phase_rad makes the current lag the voltage by that
+    angle, as an inductive load would.
+    """
     frame_rate = frame_rate or TIMER_HZ / FRAME_TICKS
     t = (first_index + np.arange(frames)) / frame_rate
     cols = []
     for k in range(channels):
-        amp = 230 * math.sqrt(2) if k % 6 < 3 else 10 * math.sqrt(2)
-        cols.append(amp * np.sin(2 * math.pi * hz * t - 2 * math.pi * (k % 3) / 3))
+        is_current = 3 <= k % 6 < 6 if k < 6 else k == 7
+        amp = 10 * math.sqrt(2) if is_current else 230 * math.sqrt(2)
+        tk = t + current_lag_s if is_current else t
+        phase = current_phase_rad if is_current else 0.0
+        cols.append(amp * np.sin(2 * math.pi * hz * tk - 2 * math.pi * (k % 3) / 3 - phase))
     return np.stack(cols, axis=1)
