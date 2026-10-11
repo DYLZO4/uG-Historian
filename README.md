@@ -152,19 +152,22 @@ If the page doesn't load from another machine, see [Troubleshooting](#troublesho
 Both are provisioned from `grafana/provisioning/`, so there's nothing to set up by hand:
 
 - **InfluxDB (Flux)** data source (`datasources/influxdb.yml`), with the token taken from `INFLUXDB_TOKEN` in `.env`. Check it under **Connections → Data sources → InfluxDB (Flux) → Save & test**. You should see *"datasource is working"*. Its uid is pinned to `PF6CD3C7EE64CF7D1`, so the dashboard and `grafana_export.py` can reference it.
-- **DAQboard** dashboard (`dashboards/daqboard.json`), in the **Microgrid** folder. Pick a node from the `node_id` dropdown:
+- **Node View** dashboard (`dashboards/node-view.json`), in the **Microgrid** folder: everything an operator needs to know about one node. The top bar has three selectors: `node_id`, **Phase** (3-phase or phase A, B or C) and **Voltage / current** (RMS or peak).
 
-| Row | Panels |
-|-----|--------|
-| Status | **Node Status** (online if the node's newest point on either path is under 30 s old), **PTP** lock state, **Full-rate frames/s** (~30048 when DAQ2 is on and nothing is lost), **Timing uncertainty**, and **Ingest losses** (`daq2-ingest` counters over the time range, which should all be 0) |
+| Part | What it shows |
+|------|---------------|
+| Top boxes | **Status**: online if its newest point is under 30 s old. **Avg power (10 s)** and **PF** (power factor) for the selected phase. **PTP**: *locked* (within 1 µs for 8 Syncs, needed for cross-node comparisons), *tracking* (servo running, within 100 µs) or *unlocked*. **Completeness**: frames stored as a share of frames the node acquired in the last minute. |
+| Power | Real power P and apparent power S for the selected phase, per second |
+| Voltage / Current | RMS or peak, per second. Voltages are phase-to-earth with the default shield profile. |
 | Full-rate waveform | The newest ~100 ms of voltage and current at ~30 kHz. Ignores the dashboard time range. |
-| RMS (per second) | Voltage and current RMS per phase from `waveform_1s`, for any time range |
-| PTP | Offset from the grandmaster, path delay, and frequency correction, one point per Sync |
-| Low-rate snapshots (collapsed) | The JSON fallback path's per-sample points, and frames per second over time |
+| PTP | Offset from the grandmaster, path delay, frequency correction (one point per Sync), and the firmware's sample-timing uncertainty |
 
-The full-rate panels show *DAQ2 off* or stay empty until a node publishes the DAQ2 stream. The snapshot panels work either way.
+The **Phase** selector applies to everything phase-specific: power, power factor, and the voltage, current and waveform graphs show only the selected phase, or all three for 3-phase. Each phase keeps its colour (A green, B yellow, C blue) whichever is shown.
+| Diagnostics (collapsed) | `daq2-ingest` loss counters across all nodes, and frames per second over time |
 
-**Changing the dashboard:** you can edit it in Grafana, but provisioned dashboards are reloaded from the file, so changes are lost on restart unless you save them back. Use **Share → Export → Save to file** and replace `grafana/provisioning/dashboards/daqboard.json`, then commit it.
+The full-rate panels show *DAQ2 off* or stay empty until a node publishes the DAQ2 stream.
+
+**Changing the dashboard:** you can edit it in Grafana, but provisioned dashboards are reloaded from the file, so changes are lost on restart unless you save them back. Use **Share → Export → Save to file** and replace `grafana/provisioning/dashboards/node-view.json`, then commit it.
 
 ## 8. Data model (what's actually in InfluxDB)
 
@@ -254,6 +257,7 @@ Nodes built with `MQTT_PUBLISH_DAQ2=ON` (CMake option in the firmware, off by de
 | | | `neutral` | `v`, `i` (neutral mode only) | frame |
 | | | `daq2_packet` | `sequence`, `first_index`, `frames`, `locked`, `time_valid`, `ptp_epoch`, `config_epoch`, `uncertainty_ns` | packet (64 frames) |
 | `waveform_1s` | forever | `voltage`, `current`, `neutral` | `<f>_rms`, `<f>_mean`, `<f>_min`, `<f>_max` for each field, plus `frames`, `locked` | UTC second |
+| | | `power` | `p_<ph>` real power (W), `s_<ph>` apparent power (VA), `pf_<ph>` power factor, for `<ph>` = `a`, `b`, `c`, `total`; plus `frames`, `locked` | UTC second |
 | | | `daq2_ingest` | the service's stats counters | 10 s |
 
 All points are tagged `node_id`.
@@ -261,6 +265,7 @@ All points are tagged `node_id`.
 - **Units.** Raw values are **integers in mV and mA** (`RAW_FORMAT=int`, the default), because InfluxDB compresses integers far better than floats. The precision is the same 0.001 V/A either way. Divide by 1000 for V and A. The `waveform_1s` values are floats in V and A.
 - **Timestamps.** Each point is at its exact sample time. Voltages and currents are sampled in different ADC slots, so `current` points are ~16.6 µs after the matching `voltage` points. Don't join them on exact `_time`.
 - **Only trustworthy timestamps are written.** The firmware clears its time-valid flag whenever the PTP servo adjusts the clock rate, about once a second. Those packets are kept if their time is within 10 µs of where the previous packet predicts, since a rate adjustment only skews times by nanoseconds. They're recorded with `time_valid=0` in `daq2_packet` and counted as `time_flagged`. Packets across a clock step, or with a timestamp jump, are skipped and counted as `invalid_time`. `locked` records whether the PTP servo was locked.
+- **Power** follows IEEE 1459: real power P = mean(v × i) per phase, apparent power S = V_rms × I_rms, and PF = P / S; totals are the sums of the phases. Each ADC samples its current one slot (16.64 µs) after its voltage, which would put a 0.3° phase error into P (~0.9% at PF 0.5), so each current is interpolated to its voltage's sampling instant first. Values are only as accurate as the (currently nominal) channel gains.
 - **Per-second aggregates** are aligned to UTC seconds. `frames` is ~30048 for a complete second. Fewer means a partial second (start-up, a gap or a restart). `locked` is `1` only if every packet in that second was locked.
 
 ### Querying
@@ -418,7 +423,7 @@ docker compose up -d
 ├── mosquitto/config/mosquitto.conf            # broker config
 ├── telegraf/telegraf.conf                     # MQTT → InfluxDB mapping
 ├── grafana/provisioning/datasources/          # auto-provisioned Grafana data source
-├── grafana/provisioning/dashboards/           # auto-provisioned DAQboard dashboard
+├── grafana/provisioning/dashboards/           # auto-provisioned Node View dashboard
 ├── daq2-ingest/                               # full-rate DAQ2 decoder service (Python)
 │   ├── daq2.py                                # packet decoding, line protocol, 1 s aggregates
 │   ├── ingest.py                              # MQTT subscriber and batched InfluxDB writer
