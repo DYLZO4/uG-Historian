@@ -23,16 +23,17 @@ def main():
     ap.add_argument("--port", type=int, default=1883)
     ap.add_argument("--nodes", type=int, default=2)
     ap.add_argument("--seconds", type=float, default=30)
+    ap.add_argument("--prefix", default="load", help="node names are <prefix>_01, <prefix>_02, ...")
     args = ap.parse_args()
 
-    client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id="daq2-load")
+    client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=f"daq2-load-{args.prefix}")
     client.max_queued_messages_set(0)
     client.connect(args.host, args.port)
     client.loop_start()
 
     period_ns = packets.period_q32() / 2**32
     start_ns = time.time_ns() + TAI_UTC_OFFSET_NS
-    nodes = [f"load_{n + 1:02d}" for n in range(args.nodes)]
+    nodes = [f"{args.prefix}_{n + 1:02d}" for n in range(args.nodes)]
     sent = index = 0
     t_start = time.perf_counter()
     while time.perf_counter() - t_start < args.seconds:

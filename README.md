@@ -314,8 +314,25 @@ These have defaults in `daq2-ingest/ingest.py` and can be overridden in the serv
 | `TAI_UTC_OFFSET_S` | `37` | Subtracted from the nodes' TAI timestamps, matching the firmware's JSON path |
 | `TIME_CONTINUITY_NS` | `10000` | How far a not-time-valid packet's time may be from the predicted time and still be kept |
 | `MAX_CLOCK_SKEW_S` | `86400` | Packets further than this from the server's clock are skipped (`implausible_time`), e.g. a node publishing before its first PTP step, when its clock still reads 1970 |
-| `MAX_BUFFERED_LINES` | `2000000` | Raw lines held in memory if InfluxDB falls behind (~10 s at two nodes) before the oldest are dropped |
+| `INGEST_WORKERS` | CPU cores, max 8 | Decode/write processes. Each node is assigned to the least-loaded one and stays there. One full-rate node per worker has headroom; two is at the limit. |
+| `WRITE_THREADS` | `4` | Parallel InfluxDB connections per worker |
+| `MAX_BUFFERED_LINES` | `2000000` | Raw lines each worker holds in memory if InfluxDB falls behind before the oldest are dropped |
+| `WORKER_QUEUE_PACKETS` | `5000` | Packets queued per worker (~10 s of one node) before the receiver drops them (`mqtt_drops`) |
 | `BATCH_LINES` / `FLUSH_SECONDS` | `20000` / `1.0` | Write batching |
+
+### Capacity
+
+`daq2-ingest` runs as one receiver process (MQTT only) plus `INGEST_WORKERS` worker processes, so it uses multiple cores. Each node's stats appear in the logs and in `daq2_ingest` tagged `worker=<n>`, and the receiver's as `worker=receiver`.
+
+Measured on the home test server (12 threads, 7.7 GB RAM), with one real node plus synthetic ones:
+
+| Nodes at full rate | Result | CPU used |
+|-----|--------|----------|
+| 1 | No loss | ingest ~0.5 core, InfluxDB ~0.5 |
+| 5 | No loss over 2 minutes, queues flat | ingest ~3.2 cores, InfluxDB ~7.8 |
+| 7 | ~9% of packets dropped: the server ran out of CPU | load average 16 on 12 threads |
+
+Budget roughly **1.5 cores of InfluxDB plus 0.6 cores of ingest per node**, plus ~25 GB/day of disk. More nodes need more cores, not configuration changes.
 
 ### Testing
 
@@ -381,7 +398,7 @@ docker compose up -d
 | InfluxDB container keeps restarting | `INFLUXDB_ADMIN_PASSWORD` is shorter than 8 characters. Fix it, then `docker compose down -v && docker compose up -d`. |
 | Can't reach Grafana / MQTT from another machine | Check the port binding (step 4). If `ufw` is enabled: `sudo ufw allow 3000/tcp` and `sudo ufw allow 1883/tcp`. Note that Docker-published ports can bypass `ufw` rules, so don't rely on `ufw` alone to *block* them. |
 | Data in mosquitto_sub but not in Grafana | Check `docker compose logs telegraf` for JSON parse errors. Check that `ts` is in nanoseconds and the Grafana time range covers it. |
-| `daq2-ingest` stats show `mqtt_drops` or `buffer_drop_lines` above 0 | InfluxDB isn't keeping up with full-rate writes. Check the server's CPU and disk I/O. |
+| `daq2-ingest` stats show `mqtt_drops` (on the `receiver` line) or `buffer_drop_lines` above 0 | A worker or InfluxDB isn't keeping up. Check `queue_max` on the receiver line, the server's CPU (`docker stats`) and disk I/O. More nodes than the server can handle (see *Capacity* in section 10) causes this. |
 | `daq2-ingest` stats show `implausible_time` above 0 | The node's clock is far from the server's, usually for the first ~15 s after it boots, before its first PTP step. If it persists, check the grandmaster and the server's NTP. |
 | `daq2-ingest` stats show `invalid_time` above 0 | The node's PTP clock stepped or its timestamp jumped, so those packets were skipped. Normal for a few seconds after a node boots. (`time_flagged` at ~1 per second is normal: those are kept.) |
 | `daq2-ingest` stats show `gap_frames` above 0 | The node acquired data it never delivered. Check the node's UART for `daq2_drop`/`drop`. |

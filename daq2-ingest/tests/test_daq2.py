@@ -174,3 +174,48 @@ def test_unsynchronised_clock_is_skipped():
                    packets.build(packets.sine_block(64, 64), now_tai, first_index=64, ptp_epoch=2))
     s = ingest.stats.take()
     assert s["implausible_time"] == 1 and len(w.lines) == 129
+
+
+def test_writer_posts_concurrently_and_retries_failures(monkeypatch):
+    ingest = pytest.importorskip("ingest")
+    import threading
+
+    real_sleep = time.sleep   # ingest.time is this same module, so keep the original
+    monkeypatch.setattr(ingest, "BATCH_LINES", 100)
+    monkeypatch.setattr(ingest, "FLUSH_SECONDS", 0.05)
+    lock = threading.Lock()
+    written, active, peak, failed = [], [0], [0], []
+
+    def fake_write(self, bucket, lines):
+        with lock:
+            active[0] += 1
+            peak[0] = max(peak[0], active[0])
+        real_sleep(0.05)                       # a slow InfluxDB
+        with lock:
+            active[0] -= 1
+            if not failed:                     # first batch fails once, then is retried
+                failed.append(lines[0])
+                return False
+            written.extend(lines)
+        return True
+
+    monkeypatch.setattr(ingest.Writer, "write", fake_write)
+    monkeypatch.setattr(ingest.time, "sleep", lambda s: real_sleep(min(s, 0.05)))
+    w = ingest.Writer()
+    w.start()
+    lines = [f"line {i}" for i in range(2000)]
+    w.put(ingest.RAW_BUCKET, lines)
+    deadline = time.time() + 10
+    while len(written) < len(lines) and time.time() < deadline:
+        real_sleep(0.02)
+    assert sorted(written) == sorted(lines)    # every line exactly once, the failed batch included
+    assert peak[0] > 1                         # posts overlapped
+
+
+def test_router_balances_nodes_and_keeps_them_in_place():
+    ingest = pytest.importorskip("ingest")
+    r = ingest.Router(4)
+    first = [r.worker(f"node_{n:02d}") for n in range(5)]
+    assert sorted(first[:4]) == [0, 1, 2, 3]            # one each before any doubles up
+    assert max(r.counts) - min(r.counts) <= 1
+    assert [r.worker(f"node_{n:02d}") for n in range(5)] == first   # sticky

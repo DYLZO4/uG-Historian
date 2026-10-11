@@ -1,15 +1,22 @@
 """Subscribes to the DAQ nodes' full-rate DAQ2 stream and writes it to InfluxDB.
 
-  daq2/<node_id>/samples ──▶ decode ──▶ waveform     raw voltage/current/neutral + daq2_packet
-                                    └─▶ waveform_1s  per-second RMS/mean/min/max, daq2_ingest
+  daq2/<node_id>/samples ──▶ receiver ──▶ worker 0..N-1 ──▶ waveform     raw voltage/current/neutral
+                           (MQTT only)   (by node)       │                + daq2_packet
+                                                          └─▶ waveform_1s  per-second RMS/mean/min/max,
+                                                                           daq2_ingest stats
 
-MQTT callbacks only enqueue payloads; one worker decodes and builds line protocol, and one writer
-batches it to InfluxDB. If InfluxDB falls behind, the oldest buffered data is dropped and counted
-rather than letting memory grow without bound.
+Python runs one thread at a time per process, so a single process tops out at roughly three
+boards. The receiver process does nothing but read MQTT and pass each payload to a worker
+process, assigning each new node to the least-loaded worker. Every packet from a given node
+goes to the same worker, which keeps that node's state
+(gap detection, timestamp continuity, per-second aggregates) in one place. Each worker decodes,
+builds line protocol, and writes through its own pool of connections. If InfluxDB falls behind,
+the oldest buffered data is dropped and counted rather than letting memory grow without bound.
 """
 import gzip
 import json
 import logging
+import multiprocessing
 import os
 import queue
 import re
@@ -53,6 +60,11 @@ RAW_INTEGER = env("RAW_FORMAT", "int") == "int"
 BATCH_LINES = env("BATCH_LINES", 20000)
 FLUSH_SECONDS = env("FLUSH_SECONDS", 1.0)
 MAX_BUFFERED_LINES = env("MAX_BUFFERED_LINES", 2_000_000)   # ~10 s of two nodes at full rate
+WRITE_THREADS = env("WRITE_THREADS", 4)     # parallel connections to InfluxDB, per worker
+# Decode/write processes; each node maps to one. One full-rate node per worker keeps up with
+# headroom; two per worker is at the limit.
+INGEST_WORKERS = env("INGEST_WORKERS", min(8, os.cpu_count() or 4))
+WORKER_QUEUE_PACKETS = env("WORKER_QUEUE_PACKETS", 5000)   # ~10 s of one node per worker
 STATS_SECONDS = env("STATS_SECONDS", 10)
 
 
@@ -134,12 +146,24 @@ def wait_for_influx():
 
 
 class Writer(threading.Thread):
-    """Batches lines per bucket and posts them gzipped. Retries failed writes in order."""
+    """Batches lines per bucket and posts them gzipped over WRITE_THREADS parallel connections.
 
-    def __init__(self):
+    One thread (this one) cuts pending lines into batches; a pool of writer threads posts them.
+    InfluxDB handles concurrent writes, and each post mostly waits on InfluxDB, so parallel posts
+    raise throughput well beyond a single connection. The job queue is small, so when every
+    writer is busy, new lines wait in `pending`, where MAX_BUFFERED_LINES bounds memory. A failed
+    batch goes back to the front of `pending` and is retried; order between batches doesn't
+    matter, as every point carries its own timestamp.
+    """
+
+    def __init__(self, threads=None):
         super().__init__(daemon=True, name="writer")
+        threads = threads or WRITE_THREADS
         self.cond = threading.Condition()
         self.pending = {RAW_BUCKET: [], AGG_BUCKET: []}
+        self.jobs = queue.Queue(maxsize=threads)
+        for n in range(threads):
+            threading.Thread(target=self._post_jobs, daemon=True, name=f"post-{n}").start()
 
     def put(self, bucket, lines):
         with self.cond:
@@ -164,13 +188,18 @@ class Writer(threading.Thread):
                 batches, self.pending = self.pending, {b: [] for b in self.pending}
             for bucket, lines in batches.items():
                 for i in range(0, len(lines), BATCH_LINES):
-                    if not self.write(bucket, lines[i:i + BATCH_LINES]):
-                        # Put back what wasn't written, ahead of anything newer
-                        with self.cond:
-                            self.pending[bucket][:0] = lines[i:]
-                            self._shed()
-                        time.sleep(1)
-                        break
+                    # Blocks while every writer is busy; meanwhile put() keeps filling pending
+                    self.jobs.put((bucket, lines[i:i + BATCH_LINES]))
+
+    def _post_jobs(self):
+        while True:
+            bucket, lines = self.jobs.get()
+            if not self.write(bucket, lines):
+                # Put it back ahead of newer data, then back off before taking more work
+                with self.cond:
+                    self.pending[bucket][:0] = lines
+                    self._shed()
+                time.sleep(1)
 
     def write(self, bucket, lines):
         q = urllib.parse.urlencode({"org": INFLUX_ORG, "bucket": bucket, "precision": "ns"})
@@ -275,7 +304,51 @@ def process(nodes, writer, topic, payload):
         writer.put(AGG_BUCKET, done)
 
 
-def worker(inbox, writer):
+class Router:
+    """Assigns each node to a worker process the first time it's seen: the worker with the
+    fewest nodes, so load stays even (a hash spreads a handful of nodes unevenly). A node then
+    stays on that worker, which holds its state."""
+
+    def __init__(self, workers):
+        self.workers = workers
+        self.assigned = {}
+        self.counts = [0] * workers
+
+    def worker(self, node_id):
+        w = self.assigned.get(node_id)
+        if w is None:
+            w = self.counts.index(min(self.counts))
+            self.assigned[node_id] = w
+            self.counts[w] += 1
+            log.info("node %s -> worker %d", node_id, w)
+        return w
+
+
+def report_stats(writer, tag, snapshot):
+    """Every STATS_SECONDS, logs snapshot() and writes it to daq2_ingest tagged worker=tag."""
+    while True:
+        time.sleep(STATS_SECONDS)
+        s = snapshot()
+        log.info("stats %s %s", tag, " ".join(f"{k}={v}" for k, v in s.items()))
+        fields = ",".join(f"{k}={v}" if isinstance(v, float) else f"{k}={v}i" for k, v in s.items())
+        writer.put(AGG_BUCKET, [f"daq2_ingest,worker={tag} {fields} {time.time_ns()}"])
+
+
+def worker_main(index, inbox):
+    """One decode/write process: handles every packet for the nodes that map to it."""
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    writer = Writer()
+    writer.start()
+
+    def snapshot():
+        s = stats.take()
+        s.pop("mqtt_drops")   # the receiver counts those
+        s["queue_depth"] = inbox.qsize()
+        s["write_ms"] = round(s["write_ms"], 1)
+        return s
+
+    threading.Thread(target=report_stats, args=(writer, str(index), snapshot), daemon=True,
+                     name="stats").start()
     nodes = {}
     while True:
         topic, payload = inbox.get()
@@ -285,28 +358,39 @@ def worker(inbox, writer):
             log.exception("failed to process packet from %s", topic)
 
 
-def report_stats(inbox, writer):
-    while True:
-        time.sleep(STATS_SECONDS)
-        s = stats.take()
-        s["queue_depth"] = inbox.qsize()
-        s["write_ms"] = round(s["write_ms"], 1)
-        log.info("stats %s", " ".join(f"{k}={v}" for k, v in s.items()))
-        fields = ",".join(f"{k}={v}" if isinstance(v, float) else f"{k}={v}i" for k, v in s.items())
-        writer.put(AGG_BUCKET, [f"daq2_ingest {fields} {time.time_ns()}"])
-
-
 def main():
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     if not INFLUX_TOKEN:
         raise SystemExit("INFLUXDB_TOKEN is not set")
     wait_for_influx()
 
-    inbox = queue.Queue(maxsize=5000)   # ~5 s of two nodes at ~470 packets/s each
-    writer = Writer()
+    # spawn rather than fork: this process runs threads (MQTT, queue feeders), which fork copies badly
+    ctx = multiprocessing.get_context("spawn")
+    inboxes = [ctx.Queue(maxsize=WORKER_QUEUE_PACKETS) for _ in range(INGEST_WORKERS)]
+    procs = [ctx.Process(target=worker_main, args=(i, q), daemon=True, name=f"worker-{i}")
+             for i, q in enumerate(inboxes)]
+    for p in procs:
+        p.start()
+    log.info("started %d worker processes", len(procs))
+
+    received = [0]
+    router = Router(len(inboxes))
+    writer = Writer(threads=1)   # only the receiver's stats go through this one
     writer.start()
-    threading.Thread(target=worker, args=(inbox, writer), daemon=True, name="worker").start()
-    threading.Thread(target=report_stats, args=(inbox, writer), daemon=True, name="stats").start()
+
+    def snapshot():
+        dead = [p.name for p in procs if not p.is_alive()]
+        if dead:
+            # A node's data would silently stop; exit so Docker restarts the whole service
+            log.error("worker process died: %s", ", ".join(dead))
+            os._exit(1)
+        s = {"received": received[0], "mqtt_drops": stats.take()["mqtt_drops"]}
+        received[0] = 0
+        s["queue_max"] = max(q.qsize() for q in inboxes)
+        return s
+
+    threading.Thread(target=report_stats, args=(writer, "receiver", snapshot), daemon=True,
+                     name="stats").start()
 
     def on_connect(client, _userdata, _flags, reason_code, _properties):
         if reason_code.is_failure:
@@ -316,8 +400,11 @@ def main():
         log.info("subscribed to %s on %s:%s", MQTT_TOPIC, MQTT_HOST, MQTT_PORT)
 
     def on_message(_client, _userdata, msg):
+        parts = msg.topic.split("/")
+        node_id = parts[1] if len(parts) == 3 else "unknown"
+        received[0] += 1
         try:
-            inbox.put_nowait((msg.topic, msg.payload))
+            inboxes[router.worker(node_id)].put_nowait((msg.topic, msg.payload))
         except queue.Full:
             stats.add(mqtt_drops=1)
 

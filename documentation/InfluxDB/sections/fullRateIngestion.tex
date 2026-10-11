@@ -36,8 +36,8 @@ Design decisions:
 \subsection{Aggregation}
 As it ingests each packet, the service accumulates per-channel sums for the current UTC second and emits the RMS, mean, minimum, and maximum once the second completes. These are written to \texttt{waveform\_1s}, which is retained indefinitely, so that long-term trends remain available after the raw data expires. A complete second contains approximately 30\,048 frames; a lower \texttt{frames} count marks a partial second at start-up or after a gap. This replaces the Flux downsampling task of the original design (Section~\ref{sec:downsampling}).
 
-\subsection{Flow Control and Data Quality}
-MQTT callbacks only enqueue payloads; one worker thread decodes them and a writer thread batches the resulting lines to InfluxDB. If InfluxDB falls behind, up to approximately 10~s of raw data is buffered in memory before the oldest raw lines are dropped; aggregates are never dropped. Every loss is counted rather than silent: the service logs, and writes to \texttt{daq2\_ingest} every 10~s, the number of packets and frames received, gaps in the nodes' frame indices (data acquired but not delivered), packets skipped for invalid timestamps, queue and buffer drops, and write errors.
+\subsection{Process Structure and Flow Control}
+Python executes one thread at a time per process, and a single-process design was measured to saturate at approximately 2.8 nodes, at which point the broker silently discarded the excess QoS~0 messages for every node. The service therefore runs as one receiver process, which only reads MQTT, and several worker processes (by default one per CPU core, at most eight). The receiver assigns each newly seen node to the worker with the fewest nodes, and all of that node's packets then go to the same worker, which holds its gap-detection, timestamp-continuity, and aggregation state. Each worker decodes, builds line protocol, and posts batches to InfluxDB over four parallel connections, since each post mostly waits on InfluxDB. If InfluxDB falls behind, up to approximately 10~s of raw data is buffered in memory before the oldest raw lines are dropped; aggregates are never dropped. If a worker's queue fills, the receiver drops that node's packets and counts them. Every loss is counted rather than silent: each process logs, and writes to \texttt{daq2\_ingest} (tagged by worker) every 10~s, the number of packets and frames received, gaps in the nodes' frame indices (data acquired but not delivered), packets skipped for invalid timestamps, queue and buffer drops, and write errors.
 
 \subsection{Storage Sizing}
 \label{sec:sizing}
@@ -65,4 +65,20 @@ The service was verified on a development machine (16 cores, 16~GB RAM) in three
   \item \textbf{A load test} published synthetic packets for two nodes at the firmware's real rate (30\,048 frames/s each) for 60~s. All 56\,342 packets were received, and InfluxDB held exactly 1\,802\,944 voltage and 1\,802\,944 current points per node, with no drops, gaps, or write errors. The service used approximately 55\% of one CPU core and InfluxDB approximately 77\%, with writes occupying approximately 42\% of the writer's time.
   \item The per-second aggregates reported 230.0~V RMS and 30\,048 frames for each complete second.
 \end{itemize}
-Performance on the historian server, and the nodes' ability to sustain the DAQ2 output on hardware, remain to be verified.
+On hardware, a node built with \texttt{MQTT\_PUBLISH\_DAQ2} sustained approximately 470 packets/s (6.3~Mbit/s) with no drops at the node, and the service stored all 30\,048 frames per second.
+
+Capacity was measured on a home test server (12 threads, 7.7~GB RAM) with one real node plus synthetic nodes:
+\begin{table}[H]
+\centering
+\caption{Measured Capacity}
+\begin{tabular}{lll}
+\hline
+\textbf{Nodes at full rate} & \textbf{Result} & \textbf{CPU used} \\
+\hline
+1 & No loss & ingest \textasciitilde 0.5 cores, InfluxDB \textasciitilde 0.5 \\
+5 & No loss over 2 minutes; queues flat & ingest \textasciitilde 3.2 cores, InfluxDB \textasciitilde 7.8 \\
+7 & \textasciitilde 9\% of packets dropped (CPU exhausted) & load average 16 on 12 threads \\
+\hline
+\end{tabular}
+\end{table}
+Capacity is therefore bounded by the server's CPU, at approximately 1.5 cores of InfluxDB and 0.6 cores of ingestion per full-rate node, and by disk, at approximately 25~GB per node per day.

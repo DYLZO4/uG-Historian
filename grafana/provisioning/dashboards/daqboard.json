@@ -345,7 +345,7 @@
             "type": "influxdb",
             "uid": "PF6CD3C7EE64CF7D1"
           },
-          "query": "from(bucket: \"waveform_1s\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"daq2_ingest\")\n  |> filter(fn: (r) => r._field == \"gap_frames\" or r._field == \"invalid_time\" or r._field == \"mqtt_drops\" or r._field == \"buffer_drop_lines\" or r._field == \"write_errors\")\n  |> sum()"
+          "query": "from(bucket: \"waveform_1s\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"daq2_ingest\")\n  |> filter(fn: (r) => r._field == \"gap_frames\" or r._field == \"invalid_time\" or r._field == \"mqtt_drops\" or r._field == \"buffer_drop_lines\" or r._field == \"write_errors\")\n  |> group(columns: [\"_field\"])\n  |> sum()"
         }
       ],
       "fieldConfig": {
