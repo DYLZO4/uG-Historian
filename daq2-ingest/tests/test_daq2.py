@@ -1,4 +1,5 @@
 import math
+import time
 
 import numpy as np
 import pytest
@@ -7,7 +8,8 @@ import daq2
 import packets
 
 TAI = 37_000_000_000
-T0 = 1_800_000_000_000_000_000 + TAI      # a whole UTC second, in TAI
+# A whole UTC second near now, in TAI (ingest skips times far from the server's clock)
+T0 = (time.time_ns() // 1_000_000_000) * 1_000_000_000 + TAI
 
 
 def test_decode_header_and_values():
@@ -117,3 +119,58 @@ def test_gap_and_invalid_time_counting():
     assert s["packets"] == 4 and s["gap_frames"] == 64 and s["invalid_time"] == 1
     # Invalid-time packet wrote nothing: 3 packets x (128 raw + 1 meta) lines
     assert len(w.lines[ingest.RAW_BUCKET]) == 3 * 129
+
+
+def test_rate_adjusted_packets_kept_only_when_time_is_continuous():
+    ingest = pytest.importorskip("ingest")
+
+    class FakeWriter:
+        def __init__(self):
+            self.lines = []
+
+        def put(self, bucket, lines):
+            if bucket == ingest.RAW_BUCKET:
+                self.lines.extend(lines)
+
+    def send(nodes, w, first, *, valid=True, epoch=1, skew_ns=0):
+        t = T0 + ((first * packets.period_q32()) >> 32) + skew_ns
+        flags = daq2.FLAG_PTP_LOCKED | (daq2.FLAG_TIME_VALID if valid else 0)
+        ingest.process(nodes, w, "daq2/node_01/samples",
+                       packets.build(packets.sine_block(first, 64), t, first_index=first,
+                                     flags=flags, ptp_epoch=epoch))
+
+    ingest.stats.take()
+    nodes, w = {}, FakeWriter()
+    send(nodes, w, 0, valid=False)                 # nothing to compare against: skipped
+    send(nodes, w, 64)                             # valid
+    send(nodes, w, 128, valid=False, skew_ns=500)  # servo rate change, time continuous: kept
+    send(nodes, w, 192, valid=False, skew_ns=50_000)   # time jumped 50 us: skipped
+    send(nodes, w, 256)                            # valid
+    send(nodes, w, 320, valid=False, epoch=2)      # clock stepped: skipped
+    s = ingest.stats.take()
+    assert s["time_flagged"] == 1 and s["invalid_time"] == 3
+    meta = [l for l in w.lines if l.startswith("daq2_packet,")]
+    assert len(meta) == 3
+    assert "first_index=128i" in meta[1] and "time_valid=0i" in meta[1]
+
+
+def test_unsynchronised_clock_is_skipped():
+    ingest = pytest.importorskip("ingest")
+
+    class FakeWriter:
+        def __init__(self):
+            self.lines = []
+
+        def put(self, bucket, lines):
+            self.lines.extend(lines)
+
+    ingest.stats.take()
+    nodes, w = {}, FakeWriter()
+    boot = 14_000_000_000                                   # 14 s after boot, i.e. 1970
+    ingest.process(nodes, w, "daq2/node_01/samples",
+                   packets.build(packets.sine_block(0, 64), boot))
+    now_tai = time.time_ns() + ingest.TAI_UTC_OFFSET_NS
+    ingest.process(nodes, w, "daq2/node_01/samples",
+                   packets.build(packets.sine_block(64, 64), now_tai, first_index=64, ptp_epoch=2))
+    s = ingest.stats.take()
+    assert s["implausible_time"] == 1 and len(w.lines) == 129
