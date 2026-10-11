@@ -40,6 +40,18 @@ services:
       - INFLUXDB_TOKEN=${INFLUXDB_TOKEN}
     restart: unless-stopped
 
+  daq2-ingest:
+    build: ./daq2-ingest
+    container_name: daq2-ingest
+    depends_on:
+      - mosquitto
+      - influxdb
+    environment:
+      - INFLUXDB_TOKEN=${INFLUXDB_TOKEN}
+      # Raw full-rate retention, only applied when the bucket is first created
+      - RAW_RETENTION=${RAW_RETENTION:-7d}
+    restart: unless-stopped
+
   grafana:
     image: grafana/grafana:latest
     container_name: grafana

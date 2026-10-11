@@ -15,3 +15,7 @@ mosquitto/log/
 *.lot
 *.bbl
 *.blg
+
+# Python
+__pycache__/
+.pytest_cache/
