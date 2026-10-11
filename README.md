@@ -6,7 +6,7 @@ Time-series historian for the microgrid DAQ testbed. STM32 DAQ nodes publish PTP
                          ┌─▶ Telegraf ─────▶ telemetry     (5 s JSON snapshots)
 DAQ nodes ──MQTT──▶ Mosquitto                   InfluxDB v2 ──Flux──▶ Grafana
  (STM32)            :1883└─▶ daq2-ingest ──▶ waveform     (full ~30 kHz)     :3000
-                                          └▶ waveform_1s  (per-second RMS)
+                                          └▶ waveform_1s  (per-second RMS, power)
 ```
 
 All five services run as Docker containers on a single historian server, managed by `docker-compose.yml`.
@@ -95,9 +95,9 @@ Everything else is hard-coded and consistent across files. Only change these if 
 | Mosquitto host binding | `docker-compose.yml` → `mosquitto.ports` | `127.0.0.1:1883:1883` | **Change to `"1883:1883"` before connecting real DAQ boards.** With the default, only clients on the server itself (e.g. the test message in step 6) can connect. The `rohan-local` branch already has this change. |
 | InfluxDB org | `docker-compose.yml`, `telegraf/telegraf.conf`, `grafana/provisioning/datasources/influxdb.yml` | `qut-microgrid` | Must match in all three files. |
 | InfluxDB bucket | same three files | `telemetry` | Must match in all three files. |
-| Raw data retention | `docker-compose.yml` → `DOCKER_INFLUXDB_INIT_RETENTION` | `90d` | Only applies on first start. Change it later in the InfluxDB UI (Load Data → Buckets). |
+| `telemetry` retention (JSON snapshots and PTP status) | `docker-compose.yml` → `DOCKER_INFLUXDB_INIT_RETENTION` | `90d` | Only applies on first start. Change it later in the InfluxDB UI (Load Data → Buckets). Full-rate retention is `RAW_RETENTION` (step 3). |
 | MQTT topic filter | `telegraf/telegraf.conf` → `topics` | `microgrid/#` | Only if the topic scheme changes. |
-| Telegraf flush interval | `telegraf/telegraf.conf` → `[agent] flush_interval` | `10s` | Lower it (e.g. `1s`) for more real-time dashboards. |
+| Telegraf flush interval | `telegraf/telegraf.conf` → `[agent] flush_interval` | `1s` | Keeps PTP status as current as Node View's 1 s refresh. Raise it only if write load matters more. |
 
 ## 5. Start the stack
 
@@ -106,12 +106,13 @@ docker compose up -d
 docker compose ps
 ```
 
-All four containers should show `running`. On first start InfluxDB takes ~10–20 s to initialise, and Telegraf may log a few connection errors until InfluxDB is ready. That's expected.
+All five containers should show `running`. On first start InfluxDB takes ~10–20 s to initialise, and Telegraf may log a few connection errors until InfluxDB is ready. That's expected.
 
 Useful log commands:
 
 ```bash
-docker compose logs -f telegraf    # MQTT → InfluxDB bridge (most useful for debugging)
+docker compose logs -f telegraf    # MQTT → InfluxDB bridge for JSON (most useful for debugging)
+docker compose logs -f daq2-ingest # full-rate bridge: stats line every 10 s
 docker compose logs -f influxdb
 docker compose logs -f mosquitto
 docker compose logs -f grafana
@@ -161,9 +162,9 @@ Both are provisioned from `grafana/provisioning/`, so there's nothing to set up 
 | Voltage / Current | RMS or peak, per second. Voltages are phase-to-earth with the default shield profile. |
 | Full-rate waveform | The newest ~100 ms of voltage and current at ~30 kHz. Ignores the dashboard time range. |
 | PTP | Offset from the grandmaster, path delay, frequency correction (one point per Sync), and the firmware's sample-timing uncertainty |
+| Diagnostics (collapsed) | `daq2-ingest` loss counters across all nodes, and frames per second over time |
 
 The **Phase** selector applies to everything phase-specific: power, power factor, and the voltage, current and waveform graphs show only the selected phase, or all three for 3-phase. Each phase keeps its colour (A green, B yellow, C blue) whichever is shown.
-| Diagnostics (collapsed) | `daq2-ingest` loss counters across all nodes, and frames per second over time |
 
 The full-rate panels show *DAQ2 off* or stay empty until a node publishes the DAQ2 stream.
 
@@ -246,7 +247,7 @@ The firmware can also publish every frame at the full ~30 kHz as a binary packet
 
 Nodes built with `MQTT_PUBLISH_DAQ2=ON` (CMake option in the firmware, off by default) also publish every acquisition packet, 64 frames at ~30 kHz, about 470 packets/s per node, as binary on `daq2/<node_id>/samples`. `daq2-ingest` decodes them and writes **every sample** to InfluxDB.
 
-> Whether a node can sustain this output alongside acquisition and PTP hasn't been verified on hardware yet. After flashing, check the node's UART: `daq2_drop` on the `MQTT` line and `drop`/`ov` on the `DAQ` line should stay at 0.
+> Verified on hardware: a node sustains this (~470 packets/s, 6.3 Mbit/s) alongside acquisition and PTP with no drops. After flashing, confirm it on the node's UART: `daq2_drop` on the `MQTT` line and `drop`/`ov` on the `DAQ` line should stay at 0.
 
 ### What's stored
 
@@ -260,7 +261,7 @@ Nodes built with `MQTT_PUBLISH_DAQ2=ON` (CMake option in the firmware, off by de
 | | | `power` | `p_<ph>` real power (W), `s_<ph>` apparent power (VA), `pf_<ph>` power factor, for `<ph>` = `a`, `b`, `c`, `total`; plus `frames`, `locked` | UTC second |
 | | | `daq2_ingest` | the service's stats counters | 10 s |
 
-All points are tagged `node_id`.
+All points are tagged `node_id`, except `daq2_ingest`, which is tagged `worker`.
 
 - **Units.** Raw values are **integers in mV and mA** (`RAW_FORMAT=int`, the default), because InfluxDB compresses integers far better than floats. The precision is the same 0.001 V/A either way. Divide by 1000 for V and A. The `waveform_1s` values are floats in V and A.
 - **Timestamps.** Each point is at its exact sample time. Voltages and currents are sampled in different ADC slots, so `current` points are ~16.6 µs after the matching `voltage` points. Don't join them on exact `_time`.
@@ -327,7 +328,7 @@ These have defaults in `daq2-ingest/ingest.py` and can be overridden in the serv
 
 ### Capacity
 
-`daq2-ingest` runs as one receiver process (MQTT only) plus `INGEST_WORKERS` worker processes, so it uses multiple cores. Each node's stats appear in the logs and in `daq2_ingest` tagged `worker=<n>`, and the receiver's as `worker=receiver`.
+`daq2-ingest` runs as one receiver process (MQTT only) plus `INGEST_WORKERS` worker processes, so it uses multiple cores. Each worker's stats (covering the nodes assigned to it) appear in the logs and in `daq2_ingest` tagged `worker=<n>`, and the receiver's as `worker=receiver`.
 
 Measured on the home test server (12 threads, 7.7 GB RAM), with one real node plus synthetic ones:
 

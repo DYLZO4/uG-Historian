@@ -34,9 +34,17 @@ End-to-end validation uses the two-node testbed with both STM32 nodes publishing
 
 \textbf{Data completeness test:} Both nodes publish for a fixed duration. The number of points in the historian for each channel is compared against the expected count of one burst per channel every 5~s. Any gap is investigated against Telegraf and Mosquitto logs and the node's UART counters.
 
-\textbf{PTP lock test:} The \texttt{sync} field is queried over a sustained period. It should remain 1 throughout normal operation once the servo has locked.
+\textbf{PTP lock test:} The \texttt{sync} field is queried over a sustained period. It should remain 1 throughout normal operation once the servo has locked. The PTP status points give the offset, path delay, and frequency correction behind it, one per Sync.
+
+\subsection{Full-Rate Path Validation}
+The full-rate path (Section~\ref{sec:fullrate}) is validated separately:
+\begin{itemize}[noitemsep]
+  \item \textbf{Unit tests} (\path{daq2-ingest/tests/}) check packet decoding against the firmware's packet layout, sample timing, timestamp handling, gap counting, per-second aggregates, and power at known power factors.
+  \item \textbf{Load test:} \path{tests/load.py} publishes synthetic packets for several nodes at the firmware's real rate; the stored point counts must match the packets sent, with no drops, gaps, or write errors.
+  \item \textbf{Completeness:} for live nodes, the frames stored in \texttt{waveform} are compared with the span of frame indices in \texttt{daq2\_packet}, which the Node View's completeness indicator does continuously. Any shortfall is traced through the \texttt{daq2\_ingest} counters (receiver drops, frame gaps, skipped timestamps, buffer drops, write errors) and the node's UART counters.
+\end{itemize}
 
 \subsection{Instrumentation}
-Ingestion health is monitored through Telegraf's container logs (\texttt{docker compose logs telegraf}) and, on the node side, the acquisition and MQTT counters printed once per second on each node's debug UART.
+Ingestion health is monitored through Telegraf's container logs (\texttt{docker compose logs telegraf}); through \texttt{daq2-ingest}'s statistics, logged and written to the \texttt{daq2\_ingest} measurement every 10~s and summarised in the Node View's Diagnostics row; and, on the node side, the acquisition and MQTT counters printed once per second on each node's debug UART.
 
 \paragraph{Deferred} Telegraf's \texttt{internal} input plugin, writing pipeline metrics (points received, write errors, flush latency) to a separate \texttt{telegraf\_internal} bucket, was designed but not enabled.

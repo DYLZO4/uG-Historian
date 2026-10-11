@@ -11,6 +11,7 @@ MQTT defines three quality of service (QoS) levels governing delivery guarantees
     \textbf{Message Type} & \textbf{QoS} & \textbf{Rationale} \\
     \hline
     Telemetry bursts & 0 (fire and forget) & ACK overhead is disproportionate to benefit; a missed burst is bounded and tolerable; retransmitting a stale sample is actively harmful to the historian. \\
+    PTP status & 0 (fire and forget) & One message per Sync, about once a second; the next message supersedes a lost one. \\
     Full-rate binary packets & 0 & High rate; the acquisition pipeline must never block on the network. \\
     \hline
     \end{tabular}

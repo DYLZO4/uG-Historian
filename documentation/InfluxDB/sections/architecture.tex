@@ -2,10 +2,9 @@
 
 \begin{figure}[H]
   \begin{center}
-    \includegraphics[width=0.95\textwidth]{architecture.pdf}
+    \includegraphics[width=0.95\textwidth]{figures/architecture.pdf}
   \end{center}
-  \caption{Historian system architecture: PTP-synchronised DAQ nodes publish over MQTT to the Mosquitto broker, Telegraf bridges to InfluxDB, and Grafana queries via Flux}\label{fig:architecture}
+  \caption{Historian system architecture: PTP-synchronised DAQ nodes publish over MQTT to the Mosquitto broker; Telegraf bridges the JSON topics and \texttt{daq2-ingest} the full-rate binary stream to InfluxDB, which Grafana queries via Flux}\label{fig:architecture}
 \end{figure}
 
-
-Mosquitto and InfluxDB are co-deployed on the same historian server, consistent with the MQTT design's broker configuration. Telegraf runs on the same server host as the intermediary bridge (no custom subscriber code is required).
+All components are co-deployed as Docker containers on the same historian server, consistent with the MQTT design's broker configuration. Two subscribers divide the broker's topic space. Telegraf bridges the low-rate JSON topics (\texttt{microgrid/\#}: bursts and PTP status) to the \texttt{telemetry} bucket through configuration alone (Section~\ref{sec:ingestion}). The full-rate binary stream (\texttt{daq2/+/samples}) cannot be handled by Telegraf, so a small custom service, \texttt{daq2-ingest}, decodes it and writes every sample to the \texttt{waveform} bucket and per-second aggregates to \texttt{waveform\_1s} (Section~\ref{sec:fullrate}). The figure's source is \path{figures/architecture.tex}.

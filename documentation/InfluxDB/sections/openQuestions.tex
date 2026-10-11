@@ -8,14 +8,14 @@ The following questions were open when this design was first written, and have b
 \hline
 \textbf{\#} & \textbf{Question} & \textbf{Resolution} \\
 \hline
-1 & ADC sample rate per channel & Approximately 30~kHz acquisition; one 50~Hz cycle per channel is published every 5~s, decimated to approximately 1~kHz (20 samples). \\
-2 & Single-sample vs burst payload & Burst. Each burst is stored as one point with fields \texttt{v\_0} to \texttt{v\_19}; per-sample timestamps are reconstructed at query time. \\
+1 & ADC sample rate per channel & Approximately 30~kHz acquisition (30\,048 frames/s). Every sample is stored through the full-rate path; the JSON path also publishes one 50~Hz cycle per channel every 5~s, decimated to approximately 1~kHz (20 samples). \\
+2 & Single-sample vs burst payload & Burst for JSON. Each burst is stored as one point with fields \texttt{v\_0} to \texttt{v\_19}, and split into one point per sample in \texttt{samples}. The full-rate path uses 64-frame binary packets. \\
 3 & TAI vs UTC in STM32 PTP stack & PTP runs on TAI; the firmware publishes UTC using a fixed 37~s offset. The historian server's clock must be on UTC. \\
 4 & Grafana on same host or separate & Same host. InfluxDB stays bound to loopback; Grafana is published on port 3000. \\
 5 & \texttt{sync\_state} as string or integer field & Replaced by an integer \texttt{sync} field (0/1) in each burst, as Telegraf's JSON parser drops strings and booleans. \\
-6 & \texttt{min}/\texttt{max} downsampling required & Deferred; downsampling not implemented (Section~\ref{sec:downsampling}). \\
-7 & Historian server hardware confirmed & Ubuntu Server 24.04 LTS host running the Docker Compose stack. \\
-8 & 90-day raw retention vs disk capacity & 90 days retained; storage growth is small at the as-built publish rate. \\
+6 & \texttt{min}/\texttt{max} downsampling required & Yes: \texttt{waveform\_1s} holds per-second RMS, mean, minimum, and maximum, computed by \texttt{daq2-ingest} (Section~\ref{sec:downsampling}). \\
+7 & Historian server hardware confirmed & Operating system confirmed: Ubuntu Server 24.04 LTS running the Docker Compose stack. The lab server's CPU, memory, and disk remain to be confirmed; they set the number of full-rate nodes supported (Section~\ref{sec:fullrate}) and the raw retention. \\
+8 & 90-day raw retention vs disk capacity & 90 days for the JSON \texttt{telemetry} bucket, where growth is small. Full-rate raw data (approximately 25~GB per node per day) defaults to 7 days, set from the server's disk; per-second aggregates are kept indefinitely. \\
 \hline
 \end{tabular}
 \end{table}

@@ -5,7 +5,7 @@
 The historian operates on a university research lab LAN and is not exposed to the public internet. The security design is therefore pragmatic and aligned with the phased approach documented in the companion MQTT design document. This section describes historian-side measures only; broker-side authentication, ACLs, and TLS are covered in the MQTT design document.
 
 \subsection{InfluxDB Access Control}
-InfluxDB v2 uses token-based authentication for all API access. As built, a single admin token, set on first start from \texttt{INFLUXDB\_TOKEN} in the \texttt{.env} file, is used by Telegraf to write and by Grafana to read.
+InfluxDB v2 uses token-based authentication for all API access. As built, a single admin token, set on first start from \texttt{INFLUXDB\_TOKEN} in the \texttt{.env} file, is used by Telegraf and \texttt{daq2-ingest} to write and by Grafana to read. \texttt{daq2-ingest} also uses it to create the \texttt{waveform} and \texttt{waveform\_1s} buckets on first start.
 
 \paragraph{Deferred} The design specified scoped tokens, so that a compromised token has a limited blast radius:
 \begin{table}[H]
@@ -16,16 +16,17 @@ InfluxDB v2 uses token-based authentication for all API access. As built, a sing
 \textbf{Token} & \textbf{Scope} & \textbf{Used by} \\
 \hline
 Telegraf write token & Write-only to \texttt{telemetry} bucket & Telegraf bridge \\
-Grafana read token   & Read-only on \texttt{telemetry} bucket  & Grafana data source \\
+Ingest write token   & Write-only to \texttt{waveform} and \texttt{waveform\_1s} & \texttt{daq2-ingest} \\
+Grafana read token   & Read-only on all three buckets  & Grafana data source \\
 Admin token          & Full organisation access               & Local admin / ad-hoc Flux queries \\
 \hline
 \end{tabular}
 \end{table}
 
-Tokens are stored as environment variables and injected into the Telegraf configuration at runtime via \texttt{\$\{INFLUXDB\_TOKEN\}}. They are never written to configuration files or committed to version control.
+With scoped tokens, the buckets would be created in advance rather than by \texttt{daq2-ingest}. Tokens are stored as environment variables and injected at runtime: into the Telegraf configuration via \texttt{\$\{INFLUXDB\_TOKEN\}}, and into \texttt{daq2-ingest} and the Grafana data source through their container environments. They are never written to configuration files or committed to version control.
 
 \subsection{Network Binding}
-The InfluxDB HTTP API is published only on the host's loopback interface by the Docker port mapping (\texttt{127.0.0.1:8086:8086}), so it is not reachable from the lab LAN directly. Telegraf and Grafana reach it over the internal Docker network by container name. Administrators access the InfluxDB UI through an SSH tunnel to the historian server.
+The InfluxDB HTTP API is published only on the host's loopback interface by the Docker port mapping (\texttt{127.0.0.1:8086:8086}), so it is not reachable from the lab LAN directly. Telegraf, \texttt{daq2-ingest}, and Grafana reach it over the internal Docker network by container name. Administrators access the InfluxDB UI through an SSH tunnel to the historian server.
 
 \subsection{Grafana Authentication}
 Grafana is published on all interfaces (port 3000) so that dashboards can be viewed from the lab LAN. Anonymous access is disabled, and the \texttt{admin} password is set on first start from \path{GRAFANA_ADMIN_PASSWORD}.
@@ -41,7 +42,7 @@ Consistent with the MQTT design's phased security model, the following measures 
 \hline
 \textbf{Measure} & \textbf{Trigger} \\
 \hline
-Scoped Telegraf and Grafana tokens        & Before any wider deployment \\
+Scoped Telegraf, ingest and Grafana tokens & Before any wider deployment \\
 Grafana \texttt{viewer} account           & If demonstration access is needed \\
 TLS on InfluxDB API (\texttt{https://})   & If historian is accessed from outside the lab VLAN \\
 Grafana OAuth / SSO                       & If multi-user access beyond the research team is required \\

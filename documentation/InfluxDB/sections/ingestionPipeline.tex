@@ -1,14 +1,15 @@
 \section{Ingestion Pipeline}
+\label{sec:ingestion}
 
 \subsection{Overview}
-The ingestion pipeline is fully configuration-driven via Telegraf's MQTT consumer input plugin, a regex processor, and the InfluxDB v2 output plugin. No custom subscriber code is required. Telegraf runs as a Docker container on the historian server alongside Mosquitto and InfluxDB.
+This section describes the low-rate JSON path (\texttt{microgrid/\#}), which is fully configuration-driven via Telegraf's MQTT consumer input plugin, regex and Starlark processors, and the InfluxDB v2 output plugin, with no custom code. Telegraf runs as a Docker container on the historian server alongside Mosquitto and InfluxDB. The full-rate binary stream is ingested by a separate service (Section~\ref{sec:fullrate}).
 
 \subsection{Telegraf Configuration}
 The as-built configuration (\path{telegraf/telegraf.conf}) is:
 \begin{lstlisting}[language=toml]
 [agent]
   interval = "10s"
-  flush_interval = "10s"
+  flush_interval = "1s"
   precision = "1ns"
   omit_hostname = true
 
@@ -22,6 +23,7 @@ The as-built configuration (\path{telegraf/telegraf.conf}) is:
   topic_tag = "topic"
 
 [[processors.regex]]
+  order = 1
   [[processors.regex.tags]]
     key = "topic"
     pattern = "^microgrid/([^/]+)/([^/]+)/([^/]+)$"
@@ -85,12 +87,12 @@ The original burst point is retained alongside the samples, so that existing das
       \textbf{Parameter} & \textbf{Value} & \textbf{Notes} \\
       \hline
       \texttt{metric\_batch\_size} & 1000 points (default) & Maximum points per write request \\
-      \texttt{flush\_interval} & 10s & Maximum time between flushes \\
+      \texttt{flush\_interval} & 1s & Maximum time between flushes \\
       \hline
     \end{tabular}
   \end{center}
 \end{table}
-At the as-built publish rate (six bursts per node every 5~s) these settings are conservative. If near-real-time dashboard visibility is required, \texttt{flush\_interval} can be reduced to 1s without affecting the schema or pipeline architecture.
+At the as-built publish rate (six bursts per node every 5~s, plus one PTP status message per second) the write load is small. The 1~s flush interval keeps PTP status as current as the Node View dashboard, which refreshes every second.
 
 \subsection{QoS Alignment}
 Telemetry is published at QoS~0, consistent with the MQTT design. The ingestion pipeline makes no attempt to detect or fill gaps in the historian record resulting from dropped packets or node disconnection. Gaps are visible in the historian and are acceptable for a research testbed.

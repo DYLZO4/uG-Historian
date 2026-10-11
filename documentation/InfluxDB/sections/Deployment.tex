@@ -1,7 +1,7 @@
 \section{Deployment \& Infrastructure}
 
 \subsection{Host Configuration}
-All components (Mosquitto, Telegraf, InfluxDB, and Grafana) are co-deployed as Docker containers on a single historian server running Ubuntu Server 24.04 LTS on the lab LAN. Co-deployment is justified at the two-node testbed scale; resource contention between components is not anticipated.
+All components (Mosquitto, Telegraf, \texttt{daq2-ingest}, InfluxDB, and Grafana) are co-deployed as Docker containers on a single historian server running Ubuntu Server 24.04 LTS on the lab LAN. Co-deployment is justified at the two-node testbed scale. At the full rate, CPU is the limiting resource: approximately 1.5 cores of InfluxDB and 0.6 cores of ingestion per node (Section~\ref{sec:fullrate}), so the host should be sized to the number of nodes.
 
 \begin{table}[H]
 \centering
@@ -12,7 +12,8 @@ All components (Mosquitto, Telegraf, InfluxDB, and Grafana) are co-deployed as D
 \hline
 Mosquitto & \texttt{eclipse-mosquitto:2}     & \texttt{127.0.0.1:1883}$^\dagger$ & MQTT broker \\
 InfluxDB  & \texttt{influxdb:2}              & \texttt{127.0.0.1:8086} & Time-series database \\
-Telegraf  & \texttt{telegraf:latest}         & none                    & MQTT to InfluxDB bridge \\
+Telegraf  & \texttt{telegraf:latest}         & none                    & MQTT to InfluxDB bridge (JSON) \\
+\texttt{daq2-ingest} & local build      & none                    & MQTT to InfluxDB bridge (full rate) \\
 Grafana   & \texttt{grafana/grafana:latest}  & \texttt{0.0.0.0:3000}   & Dashboards \\
 \hline
 \multicolumn{4}{l}{\small $^\dagger$ Changed to \texttt{1883:1883} when real DAQ nodes are connected.}
@@ -66,6 +67,18 @@ services:
       - INFLUXDB_TOKEN=${INFLUXDB_TOKEN}
     restart: unless-stopped
 
+  daq2-ingest:
+    build: ./daq2-ingest
+    container_name: daq2-ingest
+    depends_on:
+      - mosquitto
+      - influxdb
+    environment:
+      - INFLUXDB_TOKEN=${INFLUXDB_TOKEN}
+      # Raw full-rate retention, only applied when the bucket is first created
+      - RAW_RETENTION=${RAW_RETENTION:-7d}
+    restart: unless-stopped
+
   grafana:
     image: grafana/grafana:latest
     container_name: grafana
@@ -76,6 +89,8 @@ services:
       - ./grafana/provisioning:/etc/grafana/provisioning
     environment:
       - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD}
+      # Read by the provisioned data source (grafana/provisioning/datasources/influxdb.yml)
+      - INFLUXDB_TOKEN=${INFLUXDB_TOKEN}
       - GF_AUTH_ANONYMOUS_ENABLED=false
       - GF_DASHBOARDS_MIN_REFRESH_INTERVAL=1s
     depends_on:
@@ -90,7 +105,7 @@ volumes:
 The InfluxDB and Mosquitto ports are bound to loopback by default; Grafana is published on all interfaces for dashboard access from the lab LAN (Section~\ref{sec:security}). Sensitive values are passed via environment variables sourced from a \texttt{.env} file that is excluded from version control.
 
 \subsection{Persistent Volumes}
-InfluxDB and Grafana state are stored in named Docker volumes. Mosquitto data and logs are bind-mounted to host directories for visibility. The Telegraf configuration is bind-mounted read-only.
+InfluxDB and Grafana state are stored in named Docker volumes. Mosquitto data and logs are bind-mounted to host directories for visibility. The Telegraf configuration is bind-mounted read-only, and Grafana's data source and dashboard are provisioned from \path{grafana/provisioning/}. \texttt{daq2-ingest} is stateless: its image is built from the repository, and it creates its buckets on first start.
 
 \subsection{Environment File}
 A \texttt{.env} file in the Compose project root holds all secrets:
@@ -100,6 +115,7 @@ INFLUXDB_ADMIN_USER=admin
 INFLUXDB_ADMIN_PASSWORD=<redacted>   # minimum 8 characters
 INFLUXDB_TOKEN=<redacted>
 GRAFANA_ADMIN_PASSWORD=<redacted>
+RAW_RETENTION=7d                     # optional: full-rate retention
 \end{lstlisting}
 
-This file must not be committed to version control. Its values are applied only on the first start of the containers; changing them later requires resetting the volumes. Step-by-step setup instructions are given in the repository \texttt{README.md}.
+This file must not be committed to version control. Its values are applied only on the first start of the containers (\texttt{RAW\_RETENTION} only when the \texttt{waveform} bucket is first created); changing them later requires resetting the volumes. Step-by-step setup instructions are given in the repository \texttt{README.md}.

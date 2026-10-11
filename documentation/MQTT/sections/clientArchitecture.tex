@@ -8,6 +8,8 @@ Acquisition and publishing run in separate FreeRTOS tasks:
   \item The ADCs sample continuously at approximately 30~kHz; DMA fills a ring buffer and signals the DAQ task when a block completes.
   \item The DAQ task scales and timestamps each block into a packet and places it on a ready queue. If no packet slot is free, the block is dropped rather than stalling acquisition.
   \item The MQTT task is the sole consumer of the ready queue. Every 5~s, it collects one 50~Hz cycle (20 samples at approximately 1~kHz) of each channel across consecutive packets, serialises one JSON burst per channel, and publishes the six messages at QoS~0.
+  \item When built with \texttt{MQTT\_PUBLISH\_DAQ2}, the MQTT task also publishes every packet in binary on \texttt{daq2/<node\_id>/samples} (approximately 470 per second), at QoS~0. A packet that cannot be queued in the lwIP output buffer is dropped and counted rather than waited for.
+  \item After each PTP servo update (on every Sync, about once a second), the MQTT task publishes the servo's state on \path{microgrid/<node_id>/ptp_status/servo}.
   \item Every packet is released back to the pool immediately after use, so acquisition never runs out of slots.
 \end{enumerate}
 
@@ -19,10 +21,17 @@ Client IDs follow the convention \texttt{mqttc-<node\_id>}. No credentials are c
 \paragraph{Diagnostics} ~\\
 Once per second, each node prints acquisition, MQTT, and Ethernet counters (connections, published and dropped messages, overruns, queue drops, invalid timestamps) and the PTP lock state to its debug UART.
 
-\subsection{Historian Bridge}
-Telegraf with the MQTT consumer input plugin is used as the historian bridge. This provides a configuration-driven pathway from the broker to InfluxDB with no custom subscriber code. A regex processor extracts each topic segment into a tag (\texttt{node\_id}, \texttt{subsystem}, \texttt{metric}), and the payload's \texttt{ts} is used as the point timestamp. The as-built configuration (\texttt{telegraf/telegraf.conf}) is:
+\subsection{Historian Subscribers}
+Two subscribers on the historian server divide the topic space between them: Telegraf subscribes to \texttt{microgrid/\#} (the JSON bursts and PTP status), and the \texttt{daq2-ingest} service to \texttt{daq2/+/samples} (the full-rate binary stream).
+
+\paragraph{Telegraf} ~\\
+Telegraf with the MQTT consumer input plugin is used as the bridge for the JSON topics. This provides a configuration-driven pathway from the broker to InfluxDB with no custom subscriber code. A regex processor extracts each topic segment into a tag (\texttt{node\_id}, \texttt{subsystem}, \texttt{metric}), and the payload's \texttt{ts} is used as the point timestamp. The as-built configuration (\texttt{telegraf/telegraf.conf}) is:
 
 \begin{lstlisting}[language=toml]
+[agent]
+  flush_interval = "1s"
+  precision = "1ns"
+
 [[inputs.mqtt_consumer]]
   servers = ["tcp://mosquitto:1883"]
   topics = ["microgrid/#"]
@@ -33,6 +42,7 @@ Telegraf with the MQTT consumer input plugin is used as the historian bridge. Th
   topic_tag = "topic"
 
 [[processors.regex]]
+  order = 1
   [[processors.regex.tags]]
     key = "topic"
     pattern = "^microgrid/([^/]+)/([^/]+)/([^/]+)$"
@@ -47,4 +57,7 @@ Telegraf with the MQTT consumer input plugin is used as the historian bridge. Th
   bucket = "telemetry"
 \end{lstlisting}
 
-Telegraf's JSON parser flattens the \texttt{v} array into fields \texttt{v\_0} to \texttt{v\_19}, so each burst is stored as a single InfluxDB point at the first sample's timestamp. A Starlark processor additionally splits each burst into 20 points, one per sample at \texttt{ts} $+ k \cdot$ \texttt{dt\_ns}. The resulting schema is described in the InfluxDB design document.
+Telegraf's JSON parser flattens the \texttt{v} array into fields \texttt{v\_0} to \texttt{v\_19}, so each burst is stored as a single InfluxDB point at the first sample's timestamp. A Starlark processor additionally splits each burst into 20 points, one per sample at \texttt{ts} $+ k \cdot$ \texttt{dt\_ns}. PTP status messages pass through unchanged as one point per Sync. The resulting schema is described in the InfluxDB design document.
+
+\paragraph{daq2-ingest} ~\\
+Telegraf cannot compute per-sample times from the binary packet header, so the full-rate stream has a dedicated subscriber: \texttt{daq2-ingest}, a Python service using the Eclipse Paho client. One receiver process subscribes to \texttt{daq2/+/samples} at QoS~0 and hands each node's packets to a worker process, which decodes them and writes them to InfluxDB. The service is described in the InfluxDB design document.

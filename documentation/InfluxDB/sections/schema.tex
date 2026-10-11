@@ -65,6 +65,26 @@ Telegraf's JSON parser flattens the payload's \texttt{v} array into indexed fiel
   \end{center}
 \end{table}
 
+PTP status messages (\texttt{subsystem} = \texttt{ptp\_status}, \texttt{metric} = \texttt{servo}) are stored in the same measurement, one point per Sync, with their own fields:
+
+\begin{table}[H]
+  \caption{PTP Status Fields}
+  \begin{center}
+    \begin{tabular}{llp{0.55\linewidth}}
+      \hline
+      \textbf{Field Key} & \textbf{Type} & \textbf{Meaning}\\
+      \hline
+      \texttt{offset\_ns} & float & Measured clock offset from the grandmaster \\
+      \texttt{path\_delay\_ns} & float & Mean path delay used in the offset calculation \\
+      \texttt{freq\_ppb} & float & Frequency correction applied by the servo \\
+      \texttt{state} & float & Servo state: 0 no Sync yet, 1 estimating frequency, 2 PI loop running \\
+      \texttt{locked} & float & 1 once eight consecutive offsets are within 1~\textmu s \\
+      \texttt{stepped} & float & 1 if this update stepped the clock \\
+      \hline
+    \end{tabular}
+  \end{center}
+\end{table}
+
 \subsection{Timestamp}
 The point timestamp is the payload's \texttt{ts}: the time of the first sample in the burst, from the node's PTP-disciplined clock, written at nanosecond precision. The historian does not substitute broker receive time or Telegraf processing time. The time of sample $k$ is reconstructed at query time as \texttt{\_time} $+ k \cdot$ \texttt{dt\_ns}.
 
