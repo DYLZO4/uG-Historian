@@ -13,7 +13,7 @@ Topics follow a four-level hierarchy:
     \textbf{Segment} & \textbf{Description} & \textbf{Values} \\
     \hline
     \texttt{node\_id} & Fixed, zero-padded node identifier & \texttt{node\_01}, \texttt{node\_02} \\
-    \texttt{subsystem} & Electrical quantity category & \texttt{voltage}, \texttt{current} \\
+    \texttt{subsystem} & Quantity category & \texttt{voltage}, \texttt{current}, \texttt{ptp\_status} \\
     \texttt{metric} & Specific measured quantity & \texttt{phase\_a}, \texttt{phase\_b}, \texttt{phase\_c} \\
     \hline
   \end{tabular}
@@ -30,6 +30,10 @@ Each node publishes six telemetry topics:
   microgrid/node_01/current/phase_a
   microgrid/node_01/current/phase_b
   microgrid/node_01/current/phase_c
+\end{lstlisting}
+and, on every PTP Sync, one status topic (Section~\ref{sec:ptpstatus}):
+\begin{lstlisting}
+  microgrid/node_01/ptp_status/servo
 \end{lstlisting}
 
 Optionally, when built with \texttt{MQTT\_PUBLISH\_DAQ2}, a node also publishes its full-rate binary stream on \texttt{daq2/<node\_id>/samples} (Section~\ref{sec:daq2}). This topic is deliberately outside \texttt{microgrid/\#}, so that the historian bridge, which expects JSON, does not subscribe to it.

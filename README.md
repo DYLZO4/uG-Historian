@@ -159,6 +159,7 @@ Both are provisioned from `grafana/provisioning/`, so there's nothing to set up 
 | Status | **Node Status** (online if the node's newest point on either path is under 30 s old), **PTP** lock state, **Full-rate frames/s** (~30048 when DAQ2 is on and nothing is lost), **Timing uncertainty**, and **Ingest losses** (`daq2-ingest` counters over the time range, which should all be 0) |
 | Full-rate waveform | The newest ~100 ms of voltage and current at ~30 kHz. Ignores the dashboard time range. |
 | RMS (per second) | Voltage and current RMS per phase from `waveform_1s`, for any time range |
+| PTP | Offset from the grandmaster, path delay, and frequency correction, one point per Sync |
 | Low-rate snapshots (collapsed) | The JSON fallback path's per-sample points, and frames per second over time |
 
 The full-rate panels show *DAQ2 off* or stay empty until a node publishes the DAQ2 stream. The snapshot panels work either way.
@@ -207,7 +208,25 @@ This JSON path is the low-rate fallback. For the full ~30 kHz data, see [section
 
 Node liveness is judged in Grafana from the time since each node's last sample. The firmware has no heartbeat or Last Will messages.
 
-Only trust cross-node comparisons where `sync` is `1` on both nodes. There are no separate `ptp_status` topics. The servo offset is printed on each node's debug UART, not published.
+Only trust cross-node comparisons where `sync` is `1` on both nodes.
+
+**PTP status.** On every Sync (about once a second), each node also publishes its servo's state on `microgrid/<node_id>/ptp_status/servo`:
+
+```json
+{"ts": 1791696297692880523, "offset_ns": 18274, "path_delay_ns": 15497, "freq_ppb": 18010, "state": 2, "locked": 0, "stepped": 0}
+```
+
+| Field | Meaning |
+|-------|---------|
+| `ts` | The grandmaster's time for that Sync, as Unix UTC ns (same 37 s TAI handling as the bursts) |
+| `offset_ns` | Measured clock offset from the grandmaster |
+| `path_delay_ns` | Mean path delay used for it |
+| `freq_ppb` | Frequency correction the servo is applying, in parts per billion (the oscillator error it's cancelling) |
+| `state` | `0` no Sync yet, `1` estimating frequency, `2` PI loop running |
+| `locked` | `1` once 8 offsets in a row are within 1 µs |
+| `stepped` | `1` if this update stepped the clock (offset over 1 ms) |
+
+Telegraf stores these as one `mqtt_consumer` point per Sync with `subsystem = ptp_status`, `metric = servo`, and those fields.
 
 The firmware can also publish every frame at the full ~30 kHz as a binary packet on `daq2/<node_id>/samples`. That stream is handled by `daq2-ingest`, not Telegraf: see [section 10](#10-full-rate-waveform-data-daq2-ingest).
 
@@ -241,7 +260,7 @@ All points are tagged `node_id`.
 
 - **Units.** Raw values are **integers in mV and mA** (`RAW_FORMAT=int`, the default), because InfluxDB compresses integers far better than floats. The precision is the same 0.001 V/A either way. Divide by 1000 for V and A. The `waveform_1s` values are floats in V and A.
 - **Timestamps.** Each point is at its exact sample time. Voltages and currents are sampled in different ADC slots, so `current` points are ~16.6 µs after the matching `voltage` points. Don't join them on exact `_time`.
-- **Only trustworthy data is written.** Packets without a valid timestamp (e.g. while the PTP clock steps) are skipped and counted as `invalid_time`. `locked` records whether the PTP servo was locked.
+- **Only trustworthy timestamps are written.** The firmware clears its time-valid flag whenever the PTP servo adjusts the clock rate, about once a second. Those packets are kept if their time is within 10 µs of where the previous packet predicts, since a rate adjustment only skews times by nanoseconds. They're recorded with `time_valid=0` in `daq2_packet` and counted as `time_flagged`. Packets across a clock step, or with a timestamp jump, are skipped and counted as `invalid_time`. `locked` records whether the PTP servo was locked.
 - **Per-second aggregates** are aligned to UTC seconds. `frames` is ~30048 for a complete second. Fewer means a partial second (start-up, a gap or a restart). `locked` is `1` only if every packet in that second was locked.
 
 ### Querying
@@ -293,6 +312,8 @@ These have defaults in `daq2-ingest/ingest.py` and can be overridden in the serv
 | `RAW_FORMAT` | `int` | `int` (mV/mA integers) or `float` (V/A) for raw values |
 | `AGG_RETENTION` | `0` | Retention of `waveform_1s`; `0` keeps it forever |
 | `TAI_UTC_OFFSET_S` | `37` | Subtracted from the nodes' TAI timestamps, matching the firmware's JSON path |
+| `TIME_CONTINUITY_NS` | `10000` | How far a not-time-valid packet's time may be from the predicted time and still be kept |
+| `MAX_CLOCK_SKEW_S` | `86400` | Packets further than this from the server's clock are skipped (`implausible_time`), e.g. a node publishing before its first PTP step, when its clock still reads 1970 |
 | `MAX_BUFFERED_LINES` | `2000000` | Raw lines held in memory if InfluxDB falls behind (~10 s at two nodes) before the oldest are dropped |
 | `BATCH_LINES` / `FLUSH_SECONDS` | `20000` / `1.0` | Write batching |
 
@@ -361,7 +382,8 @@ docker compose up -d
 | Can't reach Grafana / MQTT from another machine | Check the port binding (step 4). If `ufw` is enabled: `sudo ufw allow 3000/tcp` and `sudo ufw allow 1883/tcp`. Note that Docker-published ports can bypass `ufw` rules, so don't rely on `ufw` alone to *block* them. |
 | Data in mosquitto_sub but not in Grafana | Check `docker compose logs telegraf` for JSON parse errors. Check that `ts` is in nanoseconds and the Grafana time range covers it. |
 | `daq2-ingest` stats show `mqtt_drops` or `buffer_drop_lines` above 0 | InfluxDB isn't keeping up with full-rate writes. Check the server's CPU and disk I/O. |
-| `daq2-ingest` stats show `invalid_time` above 0 | The node's PTP clock stepped or wasn't valid, so those packets were skipped. Normal for a few seconds after a node boots. |
+| `daq2-ingest` stats show `implausible_time` above 0 | The node's clock is far from the server's, usually for the first ~15 s after it boots, before its first PTP step. If it persists, check the grandmaster and the server's NTP. |
+| `daq2-ingest` stats show `invalid_time` above 0 | The node's PTP clock stepped or its timestamp jumped, so those packets were skipped. Normal for a few seconds after a node boots. (`time_flagged` at ~1 per second is normal: those are kept.) |
 | `daq2-ingest` stats show `gap_frames` above 0 | The node acquired data it never delivered. Check the node's UART for `daq2_drop`/`drop`. |
 
 ## Not yet implemented
@@ -369,7 +391,6 @@ docker compose up -d
 - MQTT authentication/ACLs: the broker allows anonymous clients.
 - The `telemetry_1m` bucket and `downsample_1m` Flux task for the JSON snapshots. Long-term aggregates come from `daq2-ingest` (`waveform_1s`) instead.
 - A separate read-only InfluxDB token for Grafana and a write-only token for Telegraf. Both currently use the admin token.
-- PTP status topics (`ptp_status/*`). The per-burst `sync` flag replaces them.
 
 ## Repository layout
 

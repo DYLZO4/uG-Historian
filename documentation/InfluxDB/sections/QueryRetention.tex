@@ -86,11 +86,12 @@ Grafana connects to InfluxDB v2 via the native Flux data source. Both the data s
       \textbf{Panel} & \textbf{Source and query pattern}\\
       \hline
       Node status & Online if the node's newest point in \texttt{telemetry} or \texttt{waveform} is less than 30~s old \\
-      PTP lock state & Newest \texttt{locked} (DAQ2 packet) or \texttt{sync} (JSON burst) value \\
+      PTP lock state & Newest \texttt{locked} (servo status or DAQ2 packet) or \texttt{sync} (JSON burst) value \\
       Full-rate frames/s, timing uncertainty & Newest \texttt{waveform\_1s} frame count and \texttt{daq2\_packet} uncertainty \\
       Ingest losses & Sums of the \texttt{daq2\_ingest} loss counters over the time range \\
       Full-rate voltage and current waveforms & The newest 100~ms that all three phases have reached in \texttt{waveform}, plotted against milliseconds so the axis fits the window \\
       Voltage and current RMS & \texttt{waveform\_1s} RMS fields, aggregated to the display resolution \\
+      PTP offset, path delay, frequency correction & \texttt{ptp\_status} servo points, one per Sync \\
       Snapshots (JSON fallback) & Per-sample points from the \texttt{samples} measurement, and frames per second over time \\
       \hline
     \end{tabular}

@@ -39,7 +39,7 @@ Tags are string-valued, indexed, and low-cardinality. All tags are populated by 
       \textbf{Tag Key} & \textbf{Source} & \textbf{Example Values} & \textbf{Notes}\\
       \hline
       \texttt{node\_id} & Topic segment 2 & \texttt{node\_01}, \texttt{node\_02} & Fixed at firmware flash time; MAC/IP addresses explicitly avoided \\
-      \texttt{subsystem} & Topic segment 3 & \texttt{voltage}, \texttt{current} & Electrical quantity; implies units (V or A) \\
+      \texttt{subsystem} & Topic segment 3 & \texttt{voltage}, \texttt{current}, \texttt{ptp\_status} & Quantity; implies units (V or A) for the electrical subsystems \\
       \texttt{metric} & Topic segment 4 & \texttt{phase\_a}, \texttt{phase\_b}, \texttt{phase\_c} & Phase \\
       \texttt{topic} & Full topic & \path{microgrid/node_01/voltage/phase_a} & Added by Telegraf's \texttt{topic\_tag} \\
       \hline
