@@ -1,14 +1,13 @@
 \section{Schema \& Data Model}
 InfluxDB organises data as:
 \begin{center}
-Organisation --> bucket --> Measurement --> Tags + Field + Timestamp
+Organisation $\rightarrow$ Bucket $\rightarrow$ Measurement $\rightarrow$ Tags + Fields + Timestamp
 \end{center}
 
 \subsection{Organisation}
-A single InfluxDB organisation \texttt{qut-microgrid} is used, consistent with the Telegraf output configuration in the MQTT design document.
+A single InfluxDB organisation \texttt{qut-microgrid} is used, consistent with the Telegraf output configuration.
 
 \subsection{Buckets}
-
 \begin{table}[H]
   \caption{Buckets}
   \begin{center}
@@ -16,93 +15,74 @@ A single InfluxDB organisation \texttt{qut-microgrid} is used, consistent with t
       \hline
       \textbf{Bucket} & \textbf{Purpose} & \textbf{Retention} \\
       \hline
-      \texttt{telemetry} & Full--resolution samples from all nodes & 90 days (TBD) \\
-      \texttt{telemetry\_1m} & 1--minute aggregates for long-term storage & Indefinite \\
+      \texttt{telemetry} & JSON snapshots via Telegraf & 90 days \\
+      \texttt{waveform} & Full-rate samples via \texttt{daq2-ingest} & \texttt{RAW\_RETENTION} (default 7 days) \\
+      \texttt{waveform\_1s} & Per-second aggregates via \texttt{daq2-ingest} & Indefinite \\
       \hline
     \end{tabular}
   \end{center}
 \end{table}
 
-The bucket name \texttt{telemetry} matches the Telegraf output configuration. A seperate downsampled bucket avoids data retention growth while preserving long--term trend visibility. 
-      
-\subsection{Measurements}
-Each MQTT subsystem segment maps to a distinct InfluxDB measurement name:
+The bucket name \texttt{telemetry} matches the Telegraf output configuration. The remainder of this section describes the \texttt{telemetry} schema; the \texttt{waveform} and \texttt{waveform\_1s} schemas are described in Section~\ref{sec:fullrate}. The \texttt{telemetry\_1m} bucket of the original design was superseded by \texttt{waveform\_1s} (Section~\ref{sec:downsampling}).
 
-\begin{table}[H]
-  \caption{Measuremnts}
-  \begin{center}
-    \begin{tabular}{ll}
-      \hline
-      \textbf{Measurement} & \textbf{Description}\\
-      \hline
-      \texttt{voltage} & Phase voltage samples (V) \\
-      \texttt{current} & Phase and neutral current samples (A) \\
-      \texttt{status} & Node liveness and heartbeat dignostics \\
-      \texttt{ptp\_status} & PTP synchronisation diagnostics \\
-      \hline
-    \end{tabular}
-  \end{center}
-\end{table}
-
-Additional subsystems may be introduced without structural schema changes if the STM32 firmware is extended to publish derived quantities.
+\subsection{Measurement}
+Burst points are written to the measurement \texttt{mqtt\_consumer}, Telegraf's default for the MQTT consumer plugin, and the per-sample points produced from them to \texttt{samples}, with the same tags and the fields \texttt{v} and \texttt{sync}. The electrical quantity is distinguished by the \texttt{subsystem} tag rather than by measurement name. This departs from the original design, which mapped each subsystem to its own measurement; a single measurement keeps the Telegraf configuration minimal, and filtering on an indexed tag is equally efficient.
 
 \subsection{Tags}
-Tags are string--valued, indexed, and low--cardinality. All three tags are populated automatically by Telegraf's \texttt{topic\_parsing} from the four--level MQTT topic hierachy. 
+Tags are string-valued, indexed, and low-cardinality. All tags are populated by Telegraf from the four-level MQTT topic.
 
 \begin{table}[H]
   \caption{Tags}
   \begin{center}
-    \begin{tabular}{llp{0.2\linewidth}p{0.4\linewidth}}
+    \begin{tabular}{llp{0.25\linewidth}p{0.3\linewidth}}
       \hline
       \textbf{Tag Key} & \textbf{Source} & \textbf{Example Values} & \textbf{Notes}\\
       \hline
-      \texttt{node\_id} & Topic segment 2 & \texttt{node\_1}, \texttt{node\_2} & Fixed at firmware flash time, MAC/IP addresses explicitly avoided. \\
-      \texttt{measurement} & Topic segment 4 & \texttt{va}, \texttt{ib} & Aligned with IEEE-1459-2010 notation \\
+      \texttt{node\_id} & Topic segment 2 & \texttt{node\_01}, \texttt{node\_02} & Fixed at firmware flash time; MAC/IP addresses explicitly avoided \\
+      \texttt{subsystem} & Topic segment 3 & \texttt{voltage}, \texttt{current} & Electrical quantity; implies units (V or A) \\
+      \texttt{metric} & Topic segment 4 & \texttt{phase\_a}, \texttt{phase\_b}, \texttt{phase\_c} & Phase \\
+      \texttt{topic} & Full topic & \path{microgrid/node_01/voltage/phase_a} & Added by Telegraf's \texttt{topic\_tag} \\
       \hline
     \end{tabular}
   \end{center}
 \end{table}
 
 \subsection{Fields}
+Telegraf's JSON parser flattens the payload's \texttt{v} array into indexed fields, so each burst message becomes one point with 22 fields.
+
 \begin{table}[H]
-  \caption{Tags}
+  \caption{Fields}
   \begin{center}
-    \begin{tabular}{lllp{0.5\linewidth}}
+    \begin{tabular}{llp{0.55\linewidth}}
       \hline
-      \textbf{Field Key} & \textbf{Type} & \textbf{Source} & \textbf{Units}\\
+      \textbf{Field Key} & \textbf{Type} & \textbf{Meaning}\\
       \hline
-      \texttt{v} & float64 & JSON payload \texttt{v} field & implied by \texttt{\_measurement} and \texttt{measurement} tag (V or A) \\
+      \texttt{v\_0} \ldots\ \texttt{v\_19} & float & Sample values in V or A, from the payload's \texttt{v} array \\
+      \texttt{dt\_ns} & float & Interval between samples in nanoseconds \\
+      \texttt{sync} & float & 1 if the node's PTP servo was locked, otherwise 0 \\
       \hline
     \end{tabular}
   \end{center}
 \end{table}
 
 \subsection{Timestamp}
-Timestamps are written at nanosecond precision using the \texttt{ts} field from the JSON payload, sourced from the STM32 IEEE 1588 hardware timestamping peripheral. The historian does not substitute broker receive time or Telegraf processing time: the node--reported PTP timestamp is authoritative end--to--end.
+The point timestamp is the payload's \texttt{ts}: the time of the first sample in the burst, from the node's PTP-disciplined clock, written at nanosecond precision. The historian does not substitute broker receive time or Telegraf processing time. The time of sample $k$ is reconstructed at query time as \texttt{\_time} $+ k \cdot$ \texttt{dt\_ns}.
 
 \subsection{Representative Schema}
 \begin{table}[H]
-  \caption{Representative Schema}
+  \caption{Representative Schema (one point per burst)}
   \begin{center}
-    \begin{tabular}{lllll}
+    \begin{tabular}{llllll}
       \hline
-      \textbf{subsystem (\_measurement)} & \textbf{node\_id} & \textbf{measurement} & \textbf{\_field} & \textbf{Example Value}\\
+      \textbf{\_measurement} & \textbf{node\_id} & \textbf{subsystem} & \textbf{metric} & \textbf{\_field} & \textbf{Example} \\
       \hline
-      \texttt{voltage} & \texttt{node\_1} & \texttt{va} & \texttt{v} & \\
-      \texttt{voltage} & \texttt{node\_1} & \texttt{vb} & \texttt{v} & \\
-      \texttt{voltage} & \texttt{node\_1} & \texttt{vc} & \texttt{v} & \\
-      \texttt{current} & \texttt{node\_1} & \texttt{ia} & \texttt{v} & \\
-      \texttt{current} & \texttt{node\_1} & \texttt{ib} & \texttt{v} & \\
-      \texttt{current} & \texttt{node\_1} & \texttt{ic} & \texttt{v} & \\
-      \texttt{ptp\_status} & \texttt{node\_1} & \texttt{offset\_ns} & \texttt{v} & \\
+      \texttt{mqtt\_consumer} & \texttt{node\_01} & \texttt{voltage} & \texttt{phase\_a} & \texttt{v\_0} & 231.45 \\
+      \texttt{mqtt\_consumer} & \texttt{node\_01} & \texttt{voltage} & \texttt{phase\_a} & \ldots & \\
+      \texttt{mqtt\_consumer} & \texttt{node\_01} & \texttt{voltage} & \texttt{phase\_a} & \texttt{v\_19} & 228.10 \\
+      \texttt{mqtt\_consumer} & \texttt{node\_01} & \texttt{voltage} & \texttt{phase\_a} & \texttt{dt\_ns} & 998424 \\
+      \texttt{mqtt\_consumer} & \texttt{node\_01} & \texttt{voltage} & \texttt{phase\_a} & \texttt{sync} & 1 \\
+      \texttt{mqtt\_consumer} & \texttt{node\_01} & \texttt{current} & \texttt{phase\_a} & \texttt{v\_0} & 9.82 \\
       \hline
     \end{tabular}
   \end{center}
 \end{table}
-
-
-
-
-
-
-

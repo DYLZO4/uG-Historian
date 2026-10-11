@@ -1,27 +1,39 @@
-\section{Topic Hierachy}
+\section{Topic Hierarchy}
 \subsection{Naming Scheme}
-Topics follow a four-level hierachy:
+Topics follow a four-level hierarchy:
 \begin{lstlisting}
-  microgrid/<node_id>/<subsystem>/<measurement>
+  microgrid/<node_id>/<subsystem>/<metric>
 \end{lstlisting}
 
 \begin{table}[H]
-\caption{Hierachy Description}
+\caption{Hierarchy Description}
 \centering
   \begin{tabular}{lll}
     \hline
-    \textbf{Segment} & \textbf{Description} & \textbf{Example Values} \\
+    \textbf{Segment} & \textbf{Description} & \textbf{Values} \\
     \hline
-    \texttt{node\_id} & Fixes, zero-padded node identifier & \texttt{node\_1}, \texttt{node\_2} \\
-    \texttt{subsystem} & Electrical quantity category& \texttt{voltage}, \texttt{current}, \texttt{power}, \texttt{frequency} \\
-    \texttt{measurement} & Specific measured quality & \texttt{phase\_a}, \texttt{active}, \texttt{reactive}, \texttt{fundamental} \\
+    \texttt{node\_id} & Fixed, zero-padded node identifier & \texttt{node\_01}, \texttt{node\_02} \\
+    \texttt{subsystem} & Electrical quantity category & \texttt{voltage}, \texttt{current} \\
+    \texttt{metric} & Specific measured quantity & \texttt{phase\_a}, \texttt{phase\_b}, \texttt{phase\_c} \\
     \hline
   \end{tabular}
 \end{table}
 
-Node identifiers are fixed strings assigned at firmware flash time. MAC addresses and IP addresses are explicitly avoided as node identifiers as both are mutable and would invalidate historical records if hardware is replaced. Measurement names are aligned with IEEE 1459-2010 terminology where applicable
+Node identifiers are fixed strings assigned at firmware flash time (\texttt{NODE\_ID} in \texttt{app/node\_config.h}). MAC addresses and IP addresses are explicitly avoided as node identifiers as both are mutable and would invalidate historical records if hardware is replaced. Additional subsystems (for example \texttt{power} or \texttt{frequency}) can be introduced without structural change if the firmware is extended to publish derived quantities.
 
-\subsection{Example Topics}
+\subsection{Topics Published}
+Each node publishes six telemetry topics:
+\begin{lstlisting}
+  microgrid/node_01/voltage/phase_a
+  microgrid/node_01/voltage/phase_b
+  microgrid/node_01/voltage/phase_c
+  microgrid/node_01/current/phase_a
+  microgrid/node_01/current/phase_b
+  microgrid/node_01/current/phase_c
+\end{lstlisting}
+
+Optionally, when built with \texttt{MQTT\_PUBLISH\_DAQ2}, a node also publishes its full-rate binary stream on \texttt{daq2/<node\_id>/samples} (Section~\ref{sec:daq2}). This topic is deliberately outside \texttt{microgrid/\#}, so that the historian bridge, which expects JSON, does not subscribe to it.
+
 \subsection{Wildcard Subscription Patterns}
 \begin{table}[H]
   \caption{Wildcard Subscription Patterns}
@@ -30,11 +42,10 @@ Node identifiers are fixed strings assigned at firmware flash time. MAC addresse
       \hline
       \textbf{Pattern} & \textbf{Use Case} \\
       \hline
-      microgrid/\# & full subscription: used by the InfluxDB historian bridge \\
-      microgrid/\+/status/heartbeat  & node liveness monitoring across all nodes\\
-      microgrid/node\_01/\# & All measurements from a single node (debugging) \\
-      microgrid/\+/voltage\# & All voltage measurements across all nodes \\
+      \texttt{microgrid/\#} & Full subscription: used by the historian bridge \\
+      \texttt{microgrid/node\_01/\#} & All measurements from a single node (debugging) \\
+      \texttt{microgrid/+/voltage/\#} & All voltage measurements across all nodes \\
+      \texttt{daq2/+/samples} & Full-rate binary streams from all nodes \\
       \hline
     \end{tabular}
 \end{table}
-

@@ -1,17 +1,22 @@
-\subsection{Security}
-Security is implemented in phases dependent on deployment environment, The system operates on a university reseach lab LAN and is not exposed to public internet; accordingly, the security measures are pragmatic rather than exhaustive.
+\section{Security}
+\label{sec:security}
+The system operates on a university research lab LAN and is not exposed to the public internet; accordingly, the security measures are pragmatic rather than exhaustive. Security was planned in three phases. As built, the system is at an earlier stage than Phase~1.
 
-\paragraph{Phase 1: Development}
+\paragraph{Current State}
 \begin{itemize}[noitemsep]
-  \item The broker is bound to the lab LAN interface only and is not reachable from the broader campus network.
-  \item Anonymous connections are disbaled
-  \item Username and password authentication is enabled via Mosquitto's built--in password file mechanism
-  \item Seperate credentials are issued per client (one per DAQ node, one for the Telegraf bridge)
+  \item The broker accepts anonymous connections; nodes connect without credentials.
+  \item Exposure is limited by the Docker port mapping: by default the broker is reachable only from the historian server itself, and is opened to the lab LAN only when real nodes are connected.
 \end{itemize}
 
-\paragraph{Phase 2: Hardening} ~\\
-Access control lists (ACLs) enforce the principle of least privege. Each DAQ node may only publish to its own topic subtree; a compromised node cannot spoof measurements from antoher node. The Telegraf bridge may subscribe to the full topic tree but cannot publish. 
+\paragraph{Phase 1: Authentication (deferred)}
+\begin{itemize}[noitemsep]
+  \item Disable anonymous connections.
+  \item Enable username and password authentication via Mosquitto's built-in password file mechanism.
+  \item Issue separate credentials per client (one per DAQ node, one for the Telegraf bridge).
+\end{itemize}
+
+\paragraph{Phase 2: Hardening (deferred)} ~\\
+Access control lists (ACLs) enforce the principle of least privilege. Each DAQ node may only publish to its own topic subtree, so that a compromised node cannot spoof measurements from another node. The Telegraf bridge may subscribe to the full topic tree but cannot publish.
 
 \paragraph{Phase 3: TLS (future)} ~\\
-If the broker is ever exposed outside the lab VLAN, mutual TLS on port 8883 with certificates issued by a local certificate authority is the intended upgrade path. This is not required for the current testbed scope, however has been included should the system be deployed more broadly.
-
+If the broker is ever exposed outside the lab VLAN, mutual TLS on port 8883 with certificates issued by a local certificate authority is the intended upgrade path. This is not required for the current testbed scope.

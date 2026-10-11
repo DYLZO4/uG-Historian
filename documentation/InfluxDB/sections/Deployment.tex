@@ -1,33 +1,30 @@
 \section{Deployment \& Infrastructure}
 
 \subsection{Host Configuration}
-
-All components (Mosquitto, Telegraf, InfluxDB, and Grafana) are co--deployed on a single historian server on the lab LAN. Co--deployment is justified at the two--node testbed scale; resource contention between components is not anticipated.
+All components (Mosquitto, Telegraf, InfluxDB, and Grafana) are co-deployed as Docker containers on a single historian server running Ubuntu Server 24.04 LTS on the lab LAN. Co-deployment is justified at the two-node testbed scale; resource contention between components is not anticipated.
 
 \begin{table}[H]
 \centering
 \caption{Component Deployment Summary}
-\begin{tabular}{lll}
+\begin{tabular}{llll}
 \hline
-\textbf{Component} & \textbf{Version} & \textbf{Deployment method} \\
+\textbf{Component} & \textbf{Image} & \textbf{Host port} & \textbf{Purpose} \\
 \hline
-InfluxDB   & v2.x OSS       & Docker container \\
-Telegraf   & Latest stable  & Docker container \\
-Mosquitto  & 2.x            & Docker container \\
-Grafana    & Latest stable  & Docker container \\
+Mosquitto & \texttt{eclipse-mosquitto:2}     & \texttt{127.0.0.1:1883}$^\dagger$ & MQTT broker \\
+InfluxDB  & \texttt{influxdb:2}              & \texttt{127.0.0.1:8086} & Time-series database \\
+Telegraf  & \texttt{telegraf:latest}         & none                    & MQTT to InfluxDB bridge \\
+Grafana   & \texttt{grafana/grafana:latest}  & \texttt{0.0.0.0:3000}   & Dashboards \\
 \hline
+\multicolumn{4}{l}{\small $^\dagger$ Changed to \texttt{1883:1883} when real DAQ nodes are connected.}
 \end{tabular}
 \end{table}
 
 \subsection{Docker Compose}
-
-All components are managed via a single Docker Compose file. This ensures reproducible deployment, simplifies inter--service networking, and allows the full stack to be brought up or torn down with a single command, appropriate for a research testbed where the environment may need to be rebuilt.
+\label{sec:compose}
+All components are managed via a single Docker Compose file. This ensures reproducible deployment, simplifies inter-service networking, and allows the full stack to be brought up or torn down with a single command, appropriate for a research testbed where the environment may need to be rebuilt. The as-built \texttt{docker-compose.yml} is:
 
 \begin{lstlisting}[language=toml]
-version: "3.8"
-
 services:
-
   mosquitto:
     image: eclipse-mosquitto:2
     container_name: mosquitto
@@ -46,7 +43,7 @@ services:
       - "127.0.0.1:8086:8086"
     volumes:
       - influxdb-data:/var/lib/influxdb2
-      - ./influxdb/config:/etc/influxdb2
+      - ./influxdb/init:/docker-entrypoint-initdb.d
     environment:
       - DOCKER_INFLUXDB_INIT_MODE=setup
       - DOCKER_INFLUXDB_INIT_USERNAME=${INFLUXDB_ADMIN_USER}
@@ -54,6 +51,7 @@ services:
       - DOCKER_INFLUXDB_INIT_ORG=qut-microgrid
       - DOCKER_INFLUXDB_INIT_BUCKET=telemetry
       - DOCKER_INFLUXDB_INIT_RETENTION=90d
+      - DOCKER_INFLUXDB_INIT_ADMIN_TOKEN=${INFLUXDB_TOKEN}
     restart: unless-stopped
 
   telegraf:
@@ -65,7 +63,6 @@ services:
     volumes:
       - ./telegraf/telegraf.conf:/etc/telegraf/telegraf.conf:ro
     environment:
-      - TELEGRAF_MQTT_PASSWORD=${TELEGRAF_MQTT_PASSWORD}
       - INFLUXDB_TOKEN=${INFLUXDB_TOKEN}
     restart: unless-stopped
 
@@ -73,13 +70,16 @@ services:
     image: grafana/grafana:latest
     container_name: grafana
     ports:
-      - "127.0.0.1:3000:3000"
+      - "3000:3000"
     volumes:
       - grafana-data:/var/lib/grafana
       - ./grafana/provisioning:/etc/grafana/provisioning
     environment:
       - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD}
       - GF_AUTH_ANONYMOUS_ENABLED=false
+      - GF_DASHBOARDS_MIN_REFRESH_INTERVAL=1s
+    depends_on:
+      - influxdb
     restart: unless-stopped
 
 volumes:
@@ -87,24 +87,19 @@ volumes:
   grafana-data:
 \end{lstlisting}
 
-All ports are bound to \texttt{127.0.0.1} only, consistent with the network binding posture in \S7.3. Sensitive values are passed via environment variables sourced from a \texttt{.env} file that is excluded from version control.
+The InfluxDB and Mosquitto ports are bound to loopback by default; Grafana is published on all interfaces for dashboard access from the lab LAN (Section~\ref{sec:security}). Sensitive values are passed via environment variables sourced from a \texttt{.env} file that is excluded from version control.
 
 \subsection{Persistent Volumes}
-
-InfluxDB and Grafana state are stored in named Docker volumes. Mosquitto persistence (QoS~1 message store) is bind--mounted to a host directory for visibility. The Telegraf configuration is bind--mounted read--only.
+InfluxDB and Grafana state are stored in named Docker volumes. Mosquitto data and logs are bind-mounted to host directories for visibility. The Telegraf configuration is bind-mounted read-only.
 
 \subsection{Environment File}
-
 A \texttt{.env} file in the Compose project root holds all secrets:
 
 \begin{lstlisting}[language=toml]
 INFLUXDB_ADMIN_USER=admin
-INFLUXDB_ADMIN_PASSWORD=<redacted>
+INFLUXDB_ADMIN_PASSWORD=<redacted>   # minimum 8 characters
 INFLUXDB_TOKEN=<redacted>
-TELEGRAF_MQTT_PASSWORD=<redacted>
 GRAFANA_ADMIN_PASSWORD=<redacted>
 \end{lstlisting}
 
-This file must not be committed to version control. A \texttt{.env.example} file with placeholder values should be committed in its place.
-
-
+This file must not be committed to version control. Its values are applied only on the first start of the containers; changing them later requires resetting the volumes. Step-by-step setup instructions are given in the repository \texttt{README.md}.

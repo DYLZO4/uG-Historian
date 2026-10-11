@@ -14,6 +14,7 @@
 \usepackage[compact]{titlesec}
 \usepackage{caption}
 \usepackage{listings}
+\usepackage{xurl} % \path{} for long topic names and file paths that can break across lines
 \usepackage{xcolor}
 \captionsetup[table]{position=above}
 \setstretch{1.2}
@@ -112,6 +113,7 @@
 
 \setlength{\parindent}{0pt}
 \setlength{\parskip}{1em}
+\setlength{\emergencystretch}{3em} % lets TeX loosen lines rather than overflow the margin
 
 
 \usepackage{fontspec}
@@ -165,6 +167,8 @@
         \textbf{Version} & \textbf{Date} & \textbf{Author} & \textbf{Changes / Comments} \\
         \hline
         1 & April 20, 2026 & Dylan Hessing & Initial Design \\
+        \hline
+        2 & October 11, 2026 & Dylan Hessing & Updated to as-built implementation \\
         \hline
     \end{tabular}
 

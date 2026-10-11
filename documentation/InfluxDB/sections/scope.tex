@@ -1,12 +1,10 @@
 \section{Scope}
-This document assumes the MQTT protocol design described in the companision document MQTT Protocol Design for Distributed Real-Time Telemetry System for QUT Microgrid (April 2026). In particular, it assumes: 
+This document assumes the MQTT protocol design described in the companion document \textit{MQTT Protocol Design for Distributed Real-Time Telemetry System for QUT Microgrid} (version 2). In particular, it assumes:
 \begin{itemize}[noitemsep]
-  \item Mosquitto as the broker 
-  \item telegraf as the historian bridge  
-  \item The four--level topic hierachy \texttt{microgrid/<node\_id>/<subsystem>/<measurement>},
-  \item the JSON payloads carrying a  \texttt{ts} and \texttt{v} field.
+  \item Mosquitto as the broker,
+  \item Telegraf as the historian bridge,
+  \item the four-level topic hierarchy \texttt{microgrid/<node\_id>/<subsystem>/<metric>}, and
+  \item JSON burst payloads carrying \texttt{ts}, \texttt{sync}, \texttt{dt\_ns}, and a 20-element \texttt{v} array.
 \end{itemize}
 
-Hardware design, DAQ node fabrication and RTOS/firmware decisions are out of scope. 
-
-
+Hardware design, DAQ node fabrication, and RTOS/firmware decisions are out of scope.

@@ -1,5 +1,5 @@
 \section{Scope}
-The following contraints apply to all documented design decisions.
+The following constraints apply to all documented design decisions.
 
 \begin{table}[H]
   \caption{Design Constraints}
@@ -7,15 +7,15 @@ The following contraints apply to all documented design decisions.
     \hline
     \textbf{Parameter} & \textbf{Value} \\
     \hline
-    Transport Medium & Wired Ethernet (LAN) only \\
-    Number of DAQ nodes (validation testbed) & 2 \\
-    DAQ node MCUJ & STM32 (IEEE 1588 hardware timestamping supported) \\
-    Time synchronisation protocol & PTP (IEEE 1588-2019) \\
+    Transport medium & Wired Ethernet (LAN) only \\
+    Number of DAQ nodes (validation testbed) & 2 (\texttt{node\_01}, \texttt{node\_02}) \\
+    DAQ node MCU & STM32C5A3ZGT6 (IEEE 1588 hardware timestamping) \\
+    Node software & FreeRTOS, lwIP TCP/IP stack and lwIP MQTT client \\
+    Time synchronisation protocol & PTP (IEEE 1588), peer-to-peer delay mechanism \\
     Historian & InfluxDB v2 \\
     Target measurement standards & IEC 61000-4-30 Class S, IEEE 1459-2010 \\
     \hline
   \end{tabular}
 \end{table}
 
-Wireless transport is specifically out of scope. The wired only constraint eliminates RF-induced jitter as a variable in timestamp accuracy, permitting PTP synchronisation to operate within the sub-microsectond range achievable on a switched Ethernet topology. The two-node testbed reflects hardware availabilityat the time of validation; the architecture imposes no upper bound on the number of nodes.
-
+Wireless transport is specifically out of scope. The wired-only constraint eliminates RF-induced jitter as a variable in timestamp accuracy, permitting PTP synchronisation to operate within the sub-microsecond range achievable on a switched Ethernet topology. The two-node testbed reflects hardware availability at the time of validation; the architecture imposes no upper bound on the number of nodes.

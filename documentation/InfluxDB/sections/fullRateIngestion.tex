@@ -1,0 +1,68 @@
+\section{Full-Rate Waveform Ingestion}
+\label{sec:fullrate}
+
+\subsection{Purpose}
+The JSON path (Sections~5 and 6) stores one 20-sample cycle per channel every 5~s, a small fraction of the approximately 30~kHz the nodes acquire. To store every sample, nodes built with \texttt{MQTT\_PUBLISH\_DAQ2} publish each acquisition packet in binary on \texttt{daq2/<node\_id>/samples} (see the MQTT design document), and a dedicated service, \texttt{daq2-ingest}, writes them to InfluxDB.
+
+\subsection{Why a Dedicated Service}
+Telegraf cannot be used for this stream. Each DAQ2 packet carries 64 frames whose individual sample times must be computed from the header's first-frame time, frame period, and per-channel offsets, which no Telegraf parser supports. At the full rate, two nodes also produce approximately 120\,000 points per second, beyond what a JSON-based pipeline would sustain efficiently. \texttt{daq2-ingest} is a small Python service (\path{daq2-ingest/}) running as a fifth container in the Docker Compose stack. It subscribes to \texttt{daq2/+/samples}, decodes each packet, and writes gzip-compressed line protocol to the InfluxDB HTTP API in batches.
+
+\subsection{Schema}
+\begin{table}[H]
+\centering
+\caption{Full-Rate Schema (all points tagged \texttt{node\_id})}
+\begin{tabular}{p{0.14\linewidth}p{0.14\linewidth}p{0.38\linewidth}p{0.22\linewidth}}
+\hline
+\textbf{Bucket} & \textbf{Measurement} & \textbf{Fields} & \textbf{One point per} \\
+\hline
+\texttt{waveform} & \texttt{voltage} & \texttt{a}, \texttt{b}, \texttt{c} (integer mV) & frame (\textasciitilde 33~\textmu s) \\
+ & \texttt{current} & \texttt{a}, \texttt{b}, \texttt{c} (integer mA) & frame \\
+ & \texttt{neutral} & \texttt{v}, \texttt{i} (neutral mode only) & frame \\
+ & \texttt{daq2\_packet} & sequence, frame index, lock and time-valid flags, PTP and configuration epochs, timing uncertainty & packet (64 frames) \\
+\texttt{waveform\_1s} & \texttt{voltage}, \texttt{current}, \texttt{neutral} & RMS, mean, minimum, and maximum of each field (float V/A), frame count, lock flag & UTC second \\
+ & \texttt{daq2\_ingest} & service statistics & 10~s \\
+\hline
+\end{tabular}
+\end{table}
+
+Design decisions:
+\begin{itemize}[noitemsep]
+  \item \textbf{One point per signal group per frame.} The three phase voltages are sampled simultaneously in one ADC slot, and the three currents in the next, approximately 16.6~\textmu s later. Each group is written as one point at its own exact sampling time, rather than collapsing all six channels onto one timestamp, which would introduce a phase error of 0.3\textdegree{} at 50~Hz between voltage and current.
+  \item \textbf{Integer storage.} Raw values are written as integers in mV and mA, which preserves the same 0.001~V/A precision as a three-decimal float. InfluxDB delta-encodes integers, and consecutive samples at 30~kHz differ only slightly, so integers compress approximately 4.8 times better than floats on noisy waveform data (Section~\ref{sec:sizing}).
+  \item \textbf{Only valid timestamps are written.} Packets whose timestamps the firmware has not marked valid (for example during a PTP clock step) are skipped and counted, as they cannot be placed on the time axis.
+  \item \textbf{Timescale.} The nodes' TAI timestamps are converted to UTC with the same fixed 37~s offset as the JSON path.
+\end{itemize}
+
+\subsection{Aggregation}
+As it ingests each packet, the service accumulates per-channel sums for the current UTC second and emits the RMS, mean, minimum, and maximum once the second completes. These are written to \texttt{waveform\_1s}, which is retained indefinitely, so that long-term trends remain available after the raw data expires. A complete second contains approximately 30\,048 frames; a lower \texttt{frames} count marks a partial second at start-up or after a gap. This replaces the Flux downsampling task of the original design (Section~\ref{sec:downsampling}).
+
+\subsection{Flow Control and Data Quality}
+MQTT callbacks only enqueue payloads; one worker thread decodes them and a writer thread batches the resulting lines to InfluxDB. If InfluxDB falls behind, up to approximately 10~s of raw data is buffered in memory before the oldest raw lines are dropped; aggregates are never dropped. Every loss is counted rather than silent: the service logs, and writes to \texttt{daq2\_ingest} every 10~s, the number of packets and frames received, gaps in the nodes' frame indices (data acquired but not delivered), packets skipped for invalid timestamps, queue and buffer drops, and write errors.
+
+\subsection{Storage Sizing}
+\label{sec:sizing}
+Storage was measured by writing 60~s of synthetic three-phase data for one node, with Gaussian noise added (0.3~V and 0.03~A RMS) so that it compresses no better than a real signal:
+
+\begin{table}[H]
+\centering
+\caption{Measured Storage per Value}
+\begin{tabular}{lll}
+\hline
+\textbf{Format} & \textbf{Bytes per value} & \textbf{Two nodes, per day} \\
+\hline
+Float (V/A, 3 decimals) & 7.9 & \textasciitilde 246~GB \\
+Integer (mV/mA) & 1.63 & \textasciitilde 51~GB \\
+\hline
+\end{tabular}
+\end{table}
+
+Integer storage is therefore approximately 4.8 times smaller, and is the default. At approximately 51~GB per day for two nodes, the default 7-day raw retention requires approximately 360~GB, and 30 days approximately 1.5~TB; requirements scale linearly with the number of nodes. The \texttt{waveform\_1s} bucket grows by approximately 1~MB per day. Raw retention should be set from the historian server's available disk, leaving headroom for InfluxDB compactions, and checked against actual usage once real data is flowing.
+
+\subsection{Verification}
+The service was verified on a development machine (16 cores, 16~GB RAM) in three ways:
+\begin{itemize}[noitemsep]
+  \item \textbf{Unit tests} check packet decoding against the firmware's \texttt{daq\_packet\_t} layout, sample time calculation, per-group timestamps, neutral-mode packets, rejection of malformed packets, integer conversion, gap and invalid-time counting, and per-second RMS (a 230~V sine yields 230.0~V).
+  \item \textbf{A load test} published synthetic packets for two nodes at the firmware's real rate (30\,048 frames/s each) for 60~s. All 56\,342 packets were received, and InfluxDB held exactly 1\,802\,944 voltage and 1\,802\,944 current points per node, with no drops, gaps, or write errors. The service used approximately 55\% of one CPU core and InfluxDB approximately 77\%, with writes occupying approximately 42\% of the writer's time.
+  \item The per-second aggregates reported 230.0~V RMS and 30\,048 frames for each complete second.
+\end{itemize}
+Performance on the historian server, and the nodes' ability to sustain the DAQ2 output on hardware, remain to be verified.

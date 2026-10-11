@@ -1,41 +1,22 @@
 \section{PTP Timestamping Integration}
 \subsection{Timestamp Authority}
-The STM32 nodes are the authoritative timestamp source. Each node disciplines its local clock to the PTP grandmaster prior to sampling. The \texttt{ts} field in the MQTT payload reflects the time of ADC sample capture via the IEEE 1588 hardware timestamping peripheral;not broker receive time or Telegraf processing time.
+The STM32 nodes are the authoritative timestamp source. Each node disciplines its local clock to the PTP grandmaster using hardware timestamping in the Ethernet peripheral. The \texttt{ts} field of each burst is the time of its first sample, computed in firmware from a hardware timer that shares the PTP clock's 100~MHz source, at the centre of that sample's accumulated ADC burst; it is not broker receive time or Telegraf processing time.
 
 Telegraf's \texttt{json\_time\_key} and \texttt{json\_time\_format = "unix\_ns"} configuration ensures this timestamp is used as the InfluxDB timestamp verbatim.
 
-\subsection{Clock Domain Consistency}
-All nodes share a single PTP clock domain. The historian server's system clock must also be synchronised to the same grandmaster, or to a sufficiently accurate NTP source, to ensure that Flux query time ranges expressed in wall-clock time correspond correctly to stored point timestamps.
+\subsection{Timescale}
+PTP time is TAI. The firmware converts it to UTC by subtracting a fixed 37~s offset before publishing, as it does not yet parse the UTC offset advertised in the grandmaster's Announce messages. A future leap second would therefore require a firmware update. Before the servo first locks, the node's clock counts from boot; such early bursts carry \texttt{sync} = 0.
 
-\subsection{Out--of--Order Writes}
-MQTT QoS 0 with no ordering guarantees means Telegraf may deliver points to InfluxDB with timestamps older than recently written points. For example, following a node reconnection where buffered status messages are flushed. InfluxDB handles out--of--order writes within a TSM shard natively. Default shard duration in InfluxDB v2 is one week; behaviour at shard boundaries should be verified if a node reconnects after an outage longer than one week, though this is unlikely in a lab testbed context.
+\subsection{Clock Domain Consistency}
+All nodes share a single PTP clock domain. The historian server's system clock must be on UTC, synchronised to the same grandmaster or to a sufficiently accurate NTP source, so that Flux query time ranges expressed in wall-clock time correspond correctly to stored point timestamps.
+
+\subsection{Out-of-Order Writes}
+MQTT QoS 0 with no ordering guarantees means Telegraf may deliver points to InfluxDB with timestamps older than recently written points. InfluxDB handles out-of-order writes within a shard natively. Default shard duration in InfluxDB v2 is one week; behaviour at shard boundaries should be verified if a node reconnects after an outage longer than one week, though this is unlikely in a lab testbed context.
 
 \subsection{PTP Status Logging}
-Each DAQ node publishes PTP diagnostic data periodically to \texttt{microgrid/<node\_id>/ptp\_status/offset\_ns} (and related topics), stored in the \texttt{ptp\_status} measurement in InfluxDB. This allows post--hoc assessment of timestamp quality for any given data window — a prerequisite for validating cross--node comparisons drawn from the historian.
+Each burst carries a \texttt{sync} field, set to 1 when the node's PTP servo was locked at capture. The servo reports lock after eight consecutive offsets within 1~\textmu s of the grandmaster, with a Sync message received within the last 3~s. Bursts are only started on data whose timestamp is valid (no clock step or rate change during capture), and are restarted if a clock step occurs mid-collection.
 
-The fields stored under the \texttt{ptp\_status} subsystem are:
-
-\begin{table}[H]
-  \caption{PTP\_status subsystem fields}
-  \begin{center}
-    \begin{tabular}{lll}
-      \hline
-      \textbf{measurement tag} & \textbf{field v meaning} & \textbf{Unit}\\
-      \hline
-      \texttt{offset\_ns} & Clock offset from PTP grandmaster & ns \\
-      \texttt{path\_delay\_ns} & Mean path delay to grandmaseet & ns \\
-      \texttt{sync\_state} & Synchronisation state & (LOCKED, ACQUIRING, HOLDOVER) \\
-    \end{tabular}
-  \end{center}
-\end{table}
+\paragraph{Deferred} The original design published PTP diagnostics (\texttt{offset\_ns}, \texttt{path\_delay\_ns}, and \texttt{sync\_state} with LOCKED, ACQUIRING, and HOLDOVER states) to a separate \texttt{ptp\_status} subsystem. This was replaced by the per-burst \texttt{sync} field. The servo offset and path delay are printed on each node's debug UART but not published, so the historian cannot provide post-hoc offset traces.
 
 \subsection{Timestamp Quality Validation}
-Before cross-node comparisons are drawn from the historian, the following conditions should be verified from the \texttt{ptp\_status} measurement:
-
-\begin{itemize}[noitemsep]
-  \item \texttt{sync\_state} is LOCKED for all nodes across the relevant time window
-  \item \texttt{offset\_ns} is stable and within the sub--microsecond range expected on a switched Ethernet LAN
-  \item No \texttt{HOLDOVER} periods are present, which would indicate the node was operating on a free--running clock
-\end{itemize}
-
-This validation is a prerequisite for any result in the thesis that relies on cross--node temporal alignment.
+Before cross-node comparisons are drawn from the historian, \texttt{sync} should be confirmed as 1 for all nodes across the relevant time window. Alignment between nodes can be measured independently of the historian by comparing the 1 pulse-per-second outputs of the nodes on an oscilloscope. This validation is a prerequisite for any result that relies on cross-node temporal alignment.

@@ -1,44 +1,80 @@
 \section{Ingestion Pipeline}
 
 \subsection{Overview}
-
-The ingestion pipeline is fully configuration--driven via Telegraf's MQTT consumer input plugin and InfluxDB v2 output plugin. No custom subscriber code is required for the single--sample payload path. Telegraf is co--deployed on the historian server alongside the Mosquitto and InfluxDB. 
+The ingestion pipeline is fully configuration-driven via Telegraf's MQTT consumer input plugin, a regex processor, and the InfluxDB v2 output plugin. No custom subscriber code is required. Telegraf runs as a Docker container on the historian server alongside Mosquitto and InfluxDB.
 
 \subsection{Telegraf Configuration}
-\begin{lstlisting}[language = toml]
-[[inputs.mqtt_consumer]]
-  servers     = ["tcp://localhost:1883"]
-  topics      = ["microgrid/#"]
-  username    = "telegraf"
-  password    = "${TELEGRAF_MQTT_PASSWORD}"
-  qos         = 0
-  data_format = "json"
-  json_time_key    = "ts"
-  json_time_format = "unix_ns"
+The as-built configuration (\path{telegraf/telegraf.conf}) is:
+\begin{lstlisting}[language=toml]
+[agent]
+  interval = "10s"
+  flush_interval = "10s"
+  precision = "1ns"
+  omit_hostname = true
 
-  [[inputs.mqtt_consumer.topic_parsing]]
-    topic       = "microgrid/<node_id>/<subsystem>/<measurement>"
-    tags        = "_/<node_id>/_/<measurement>"
-    measurement = "_/_/<subsystem>/_"
+[[inputs.mqtt_consumer]]
+  servers = ["tcp://mosquitto:1883"]
+  topics = ["microgrid/#"]
+  qos = 0
+  data_format = "json"
+  json_time_key = "ts"
+  json_time_format = "unix_ns"
+  topic_tag = "topic"
+
+[[processors.regex]]
+  [[processors.regex.tags]]
+    key = "topic"
+    pattern = "^microgrid/([^/]+)/([^/]+)/([^/]+)$"
+    replacement = "${1}"
+    result_key = "node_id"
+  # ... likewise ${2} -> subsystem, ${3} -> metric
 
 [[outputs.influxdb_v2]]
-  urls         = ["http://localhost:8086"]
-  token        = "${INFLUXDB_TOKEN}"
+  urls = ["http://influxdb:8086"]
+  token = "${INFLUXDB_TOKEN}"
   organization = "qut-microgrid"
-  bucket       = "telemetry"
+  bucket = "telemetry"
 \end{lstlisting}
-Note:
-\begin{itemize}
-  \item \texttt{json\_time\_key \= "ts"} and \texttt{json\_time\_format \= "unix\_ns"} instructs Telegraph to use the STM32 PTP timestamp as the InfluxDB point timestamp verbatim. Telegraf processing trime is never substituted.
-  \item \texttt{topic\_parsing} extracts \texttt{node\_id} and \texttt{measurement} as tags. The \texttt{subsystem} segment drives the InfluxDB measurement name via the \texttt{measurement} key. The leading \texttt{microgrid} segment is ignored. 
-  \item Credentials are injected via environment variables and are never stored in the config files, consistent with the MQTT design security posture. 
+Notes:
+\begin{itemize}[noitemsep]
+  \item \texttt{json\_time\_key = "ts"} and \texttt{json\_time\_format = "unix\_ns"} make Telegraf use the node's PTP-derived timestamp as the InfluxDB point timestamp verbatim, and \texttt{precision = "1ns"} preserves its full resolution.
+  \item The full topic is kept as the \texttt{topic} tag, and the regex processor extracts \texttt{node\_id}, \texttt{subsystem}, and \texttt{metric} from it. This replaced the \texttt{topic\_parsing} block of the original design.
+  \item Telegraf reaches the broker and database by container name over the internal Docker network.
+  \item The InfluxDB token is injected via an environment variable and is never stored in the configuration file. The broker requires no credentials (see the MQTT design document).
 \end{itemize}
 
-\subsection{Single--Sample Payload Path}
-For the single-sample payload \texttt{\{"ts": <unix\_ns>, "v": <float>\}}, Telegraf requires no transformation. The \texttt{v} field maps directly to the \texttt{\_field} column and the timestamp is extracted from \texttt{ts}. This path is fully supported by the native Telegraf JSON parser with zero custom logic.
-
 \subsection{Burst Payload Path}
-The burst payload format \texttt{(\{"ts": <unix\_ns>, "dt": <seconds>, "v": [...]\})}, defined in the MQTT design, is not natively handled by Telegraf's JSON parser: it cannot reconstruct per-sample timestamps from a \texttt{ts} + \texttt{dt} + array structure.
+Each JSON burst \texttt{\{"ts", "sync", "dt\_ns", "v": [20 values]\}} is parsed into a single point: Telegraf's JSON parser flattens the \texttt{v} array into fields \texttt{v\_0} to \texttt{v\_19}, and \texttt{sync} and \texttt{dt\_ns} become numeric fields. The parser cannot reconstruct per-sample timestamps itself. Booleans and strings are dropped by the parser, which is why the firmware sends \texttt{sync} as an integer.
+
+\paragraph{Burst Splitting} A Starlark processor, run after the regex processor, splits each burst into individually timestamped points. For every burst point it emits 20 additional points in the \texttt{samples} measurement, sample $k$ at \texttt{ts} $+ k \cdot$ \texttt{dt\_ns}, carrying the burst's tags and the fields \texttt{v} and \texttt{sync}:
+
+\begin{lstlisting}[language=toml]
+[[processors.starlark]]
+  order = 2
+  source = '''
+def apply(metric):
+    if "dt_ns" not in metric.fields or "v_0" not in metric.fields:
+        return metric
+    dt = int(metric.fields["dt_ns"])
+    sync = metric.fields.get("sync")
+    out = [metric]
+    for k in range(1024):
+        key = "v_" + str(k)
+        if key not in metric.fields:
+            break
+        sample = Metric("samples")
+        for name, value in metric.tags.items():
+            sample.tags[name] = value
+        sample.fields["v"] = metric.fields[key]
+        if sync != None:
+            sample.fields["sync"] = sync
+        sample.time = metric.time + k * dt
+        out.append(sample)
+    return out
+'''
+\end{lstlisting}
+
+The original burst point is retained alongside the samples, so that existing dashboards and the liveness check are unaffected; at the JSON path's rate the duplication is negligible. This path is the low-rate fallback for when the full-rate stream is not in use. The full-rate binary stream on \texttt{daq2/<node\_id>/samples} lies outside Telegraf's subscribed topic tree and is ingested separately (Section~\ref{sec:fullrate}).
 
 \subsection{Write Batching}
 \begin{table}[H]
@@ -46,23 +82,23 @@ The burst payload format \texttt{(\{"ts": <unix\_ns>, "dt": <seconds>, "v": [...
   \begin{center}
     \begin{tabular}{lll}
       \hline
-      \textbf{Parameter} & \textbf{Default} & \textbf{Notes} \\
+      \textbf{Parameter} & \textbf{Value} & \textbf{Notes} \\
       \hline
-      \texttt{metric\_batch\_size} & 1000 points & Maximum points per write request \\
+      \texttt{metric\_batch\_size} & 1000 points (default) & Maximum points per write request \\
       \texttt{flush\_interval} & 10s & Maximum time between flushes \\
       \hline
     \end{tabular}
   \end{center}
 \end{table}
-For a two-node, 6–8 channel testbed at modest sample rates these defaults are conservative. If near-real-time dashboard visibility is required, flush\_interval should be reduced to 1s. This is a runtime tuning decision and does not affect the schema or pipeline architecture.
+At the as-built publish rate (six bursts per node every 5~s) these settings are conservative. If near-real-time dashboard visibility is required, \texttt{flush\_interval} can be reduced to 1s without affecting the schema or pipeline architecture.
 
 \subsection{QoS Alignment}
-Telemetry samples are published at QoS 0, consistent with the MQTT design. The ingestion pipeline makes no attempt to detect or fill gaps in the historian record resulting from dropped packets or node disconnection. Gaps are visible in the historian and are acceptable for a research testbed.
+Telemetry is published at QoS~0, consistent with the MQTT design. The ingestion pipeline makes no attempt to detect or fill gaps in the historian record resulting from dropped packets or node disconnection. Gaps are visible in the historian and are acceptable for a research testbed.
 
 \subsection{Error Handling}
 Telegraf drops malformed payloads that fail JSON parsing and logs an error. No dead-letter queue is implemented. This is acceptable given:
 \begin{itemize}[noitemsep]
-  \item The two-node testbed operates on a wired LAN with low packet loss probability
-  \item Telemetry samples are QoS 0 by design — loss is already tolerated at the transport layer
-  \item A dead-letter mechanism would add operational complexity disproportionate to the research context
+  \item the two-node testbed operates on a wired LAN with low packet loss probability,
+  \item telemetry is QoS~0 by design, so loss is already tolerated at the transport layer, and
+  \item a dead-letter mechanism would add operational complexity disproportionate to the research context.
 \end{itemize}

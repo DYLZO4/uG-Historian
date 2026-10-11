@@ -1,33 +1,25 @@
 \section{Broker Selection \& Configuration}
 
-Eclipse Mosquitto is selected as the MQTT broker. This is suitable of a research testbed with two DAQ nodes as it is:
+Eclipse Mosquitto 2 is selected as the MQTT broker. This is suitable for a research testbed with two DAQ nodes as it is:
 \begin{itemize}[noitemsep]
   \item lightweight
   \item well documented
   \item suitable for co-deployment on the historian server alongside InfluxDB without significant resource contention
-  \item carries no licensing contraintes under the eclipse public licence 
+  \item carries no licensing constraints under the Eclipse Public Licence
 \end{itemize}
 Alternatives such as EMQX and HiveMQ were considered but are designed for large-scale deployments with thousands of concurrent clients; the additional operational complexity is not justified at this scale.
 
-The broker runs on the microgrid historian server, bound to the lab LAN interface. Key configuration parameters are as follows:
+The broker runs as the \texttt{eclipse-mosquitto:2} Docker container on the historian server (see the InfluxDB design document for the full Docker Compose deployment). The as-built configuration (\path{mosquitto/config/mosquitto.conf}) is:
 
 \begin{lstlisting}[language=toml]
-listener 1883 <lab_lan_ip>
-allow_anonymous false
-password_file /etc/mosquitto/passwd
-
+listener 1883
+allow_anonymous true
 persistence true
-persistence_location /var/lib/mosquitto/
+persistence_location /mosquitto/data/
+log_dest file /mosquitto/log/mosquitto.log
+log_dest stdout
+\end{lstlisting}
 
-max_inflight_messages 100
-max_queued_messages   1000
+Port 1883 is used for lab LAN traffic. Network exposure is controlled by the Docker port mapping rather than the listener address: the default mapping \texttt{127.0.0.1:1883:1883} admits only clients on the server itself (such as a test message published with \texttt{mosquitto\_pub}), and must be changed to \texttt{1883:1883} before DAQ nodes can connect. Anonymous connections are currently permitted; see Section~\ref{sec:security}. Persistence is enabled, although with all telemetry published at QoS~0 there are no queued messages for it to preserve.
 
-log_type error
-log_type warning
-log_type notice
-\end{lstlisting}  
-
-Port 1883 is used for internal lab LAN traffic. TLS on port 8883 is reserved as a future hardening measure and discussed in section X. Persistence is enabled so that QoS 1 messages survive a broker restart without loss. The \texttt{max\_inflight\_messages} and \texttt{max\_queued\_messages} parameters are bounded to prevent unbounded memory growth under a backlogged subscriber.
-
-
-
+\paragraph{Deferred} The originally designed authentication (\texttt{password\_file}), explicit LAN interface binding, and \texttt{max\_inflight\_messages}/\texttt{max\_queued\_messages} limits were not applied. TLS on port 8883 remains a future hardening measure.

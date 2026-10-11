@@ -1,13 +1,15 @@
 # uG-Historian
 
-Time-series historian for the microgrid DAQ testbed. STM32 DAQ nodes publish PTP-timestamped samples over MQTT. Telegraf bridges them into InfluxDB, and Grafana displays them.
+Time-series historian for the microgrid DAQ testbed. STM32 DAQ nodes publish PTP-timestamped samples over MQTT. Telegraf and `daq2-ingest` write them into InfluxDB, and Grafana displays them.
 
 ```
-DAQ nodes ──MQTT──▶ Mosquitto ──▶ Telegraf ──▶ InfluxDB v2 ──Flux──▶ Grafana
- (or sim.py)         :1883                       :8086                 :3000
+                         ┌─▶ Telegraf ─────▶ telemetry     (5 s JSON snapshots)
+DAQ nodes ──MQTT──▶ Mosquitto                   InfluxDB v2 ──Flux──▶ Grafana
+ (STM32)            :1883└─▶ daq2-ingest ──▶ waveform     (full ~30 kHz)     :3000
+                                          └▶ waveform_1s  (per-second RMS)
 ```
 
-All four services run as Docker containers on a single historian server, managed by `docker-compose.yml`.
+All five services run as Docker containers on a single historian server, managed by `docker-compose.yml`.
 
 Tested on **Ubuntu Server 24.04.4 LTS**.
 
@@ -15,7 +17,8 @@ Tested on **Ubuntu Server 24.04.4 LTS**.
 |-----------|-------------------------|----------------------|--------------------------------------|
 | mosquitto | `eclipse-mosquitto:2`   | `127.0.0.1:1883`     | MQTT broker                          |
 | influxdb  | `influxdb:2`            | `127.0.0.1:8086`     | Time-series database + admin UI      |
-| telegraf  | `telegraf:latest`       | none                 | MQTT → InfluxDB bridge               |
+| telegraf  | `telegraf:latest`       | none                 | MQTT → InfluxDB bridge (JSON snapshots) |
+| daq2-ingest | built from `daq2-ingest/` | none             | MQTT → InfluxDB bridge (full-rate binary stream) |
 | grafana   | `grafana/grafana:latest`| `0.0.0.0:3000`       | Dashboards                           |
 
 Design documents (LaTeX + PDF) are in [`documentation/`](documentation/).
@@ -77,8 +80,9 @@ cat .env
 |---------------------------|----------------------|-------|
 | `INFLUXDB_ADMIN_USER`     | InfluxDB             | Username for the InfluxDB web UI. |
 | `INFLUXDB_ADMIN_PASSWORD` | InfluxDB             | **Minimum 8 characters**, or InfluxDB setup fails. |
-| `INFLUXDB_TOKEN`          | InfluxDB, Telegraf   | Admin API token. Telegraf writes with it, and you paste it into Grafana in step 7. Any long random string works. |
+| `INFLUXDB_TOKEN`          | InfluxDB, Telegraf, daq2-ingest, Grafana | Admin API token, used by everything that reads or writes InfluxDB. Any long random string works. |
 | `GRAFANA_ADMIN_PASSWORD`  | Grafana              | Password for the Grafana `admin` user. |
+| `RAW_RETENTION`           | daq2-ingest          | Optional, default `7d`. How long full-rate data is kept. Size it to your disk: see [section 10](#10-full-rate-waveform-data-daq2-ingest). |
 
 > **These values are only applied the first time the containers start.** InfluxDB and Grafana store their users and tokens in Docker volumes. Changing `.env` later does **not** change the password or token. See [Resetting](#resetting-everything) if you need to start over.
 
@@ -88,7 +92,7 @@ Everything else is hard-coded and consistent across files. Only change these if 
 
 | Setting | Where | Default | When to change |
 |---------|-------|---------|----------------|
-| Mosquitto host binding | `docker-compose.yml` → `mosquitto.ports` | `127.0.0.1:1883:1883` | **Change to `"1883:1883"` before connecting real DAQ boards.** With the default, only clients on the server itself (e.g. `sim.py`) can connect. The `rohan-local` branch already has this change. |
+| Mosquitto host binding | `docker-compose.yml` → `mosquitto.ports` | `127.0.0.1:1883:1883` | **Change to `"1883:1883"` before connecting real DAQ boards.** With the default, only clients on the server itself (e.g. the test message in step 6) can connect. The `rohan-local` branch already has this change. |
 | InfluxDB org | `docker-compose.yml`, `telegraf/telegraf.conf`, `grafana/provisioning/datasources/influxdb.yml` | `qut-microgrid` | Must match in all three files. |
 | InfluxDB bucket | same three files | `telemetry` | Must match in all three files. |
 | Raw data retention | `docker-compose.yml` → `DOCKER_INFLUXDB_INIT_RETENTION` | `90d` | Only applies on first start. Change it later in the InfluxDB UI (Load Data → Buckets). |
@@ -113,26 +117,24 @@ docker compose logs -f mosquitto
 docker compose logs -f grafana
 ```
 
-## 6. Send test data with the simulator
+## 6. Send a test message
 
-`sim/sim.py` publishes fake 3-phase voltage/current and PTP status for `node_1` and `node_2` at 10 Hz. Run it **on the server**, because it connects to `localhost:1883`.
+Before connecting real nodes, check the pipeline by publishing one burst in the same format the DAQ firmware uses (see [section 8](#8-data-model-whats-actually-in-influxdb)). Run this **on the server**, because the broker only listens on `localhost` by default:
 
 ```bash
-sudo apt-get install -y python3-paho-mqtt
-python3 sim/sim.py
+docker exec mosquitto mosquitto_pub -t microgrid/node_test/voltage/phase_a -m \
+  "{\"ts\":$(date +%s%N),\"sync\":1,\"dt_ns\":1000000,\"v\":[0,71,135,186,219,230,219,186,135,71,0,-71,-135,-186,-219,-230,-219,-186,-135,-71]}"
 ```
 
-> Use the apt package (paho-mqtt 1.6). The script uses the paho-mqtt 1.x API and fails with `pip install paho-mqtt` (2.x). If you must use pip, install it in a venv with `pip install "paho-mqtt<2"`.
-
-To confirm messages are reaching the broker, run this in a second terminal:
+To confirm messages are reaching the broker, run this in a second terminal before publishing:
 
 ```bash
 docker exec -it mosquitto mosquitto_sub -t 'microgrid/#' -v
 ```
 
-Leave the simulator running while you set up Grafana.
+Then check `docker compose logs telegraf` for errors. The point should appear in InfluxDB under `node_id = node_test`. It stays in the bucket until retention expires, so filter it out of dashboards or use a test bucket.
 
-## 7. Log in to Grafana and connect InfluxDB
+## 7. Log in to Grafana
 
 ### Log in
 
@@ -145,68 +147,173 @@ Open **`http://<server-ip>:3000`** in a browser (find the IP with `hostname -I`)
 
 If the page doesn't load from another machine, see [Troubleshooting](#troubleshooting).
 
-### Set up the InfluxDB data source
+### Data source and dashboard
 
-A data source called **InfluxDB (Flux)** is provisioned automatically from `grafana/provisioning/datasources/influxdb.yml`. **However, its token is empty.** The Grafana container isn't given `INFLUXDB_TOKEN` in `docker-compose.yml`, so the `${INFLUXDB_TOKEN}` placeholder resolves to nothing. Fill it in by hand:
+Both are provisioned from `grafana/provisioning/`, so there's nothing to set up by hand:
 
-1. Go to **Connections → Data sources → InfluxDB (Flux)**.
-   (If it's missing, click **Add new data source → InfluxDB** instead.)
-2. Check or set these fields:
+- **InfluxDB (Flux)** data source (`datasources/influxdb.yml`), with the token taken from `INFLUXDB_TOKEN` in `.env`. Check it under **Connections → Data sources → InfluxDB (Flux) → Save & test**. You should see *"datasource is working"*. Its uid is pinned to `PF6CD3C7EE64CF7D1`, so the dashboard and `grafana_export.py` can reference it.
+- **DAQboard** dashboard (`dashboards/daqboard.json`), in the **Microgrid** folder. Pick a node from the `node_id` dropdown:
 
-   | Field              | Value                    |
-   |--------------------|--------------------------|
-   | Query language     | `Flux`                   |
-   | URL                | `http://influxdb:8086`   |
-   | Basic auth         | off                      |
-   | Organization       | `qut-microgrid`          |
-   | Token              | `INFLUXDB_TOKEN` from `.env` |
-   | Default Bucket     | `telemetry`              |
+| Row | Panels |
+|-----|--------|
+| Status | **Node Status** (online if the node's newest point on either path is under 30 s old), **PTP** lock state, **Full-rate frames/s** (~30048 when DAQ2 is on and nothing is lost), **Timing uncertainty**, and **Ingest losses** (`daq2-ingest` counters over the time range, which should all be 0) |
+| Full-rate waveform | The newest ~100 ms of voltage and current at ~30 kHz. Ignores the dashboard time range. |
+| RMS (per second) | Voltage and current RMS per phase from `waveform_1s`, for any time range |
+| Low-rate snapshots (collapsed) | The JSON fallback path's per-sample points, and frames per second over time |
 
-   Use `http://influxdb:8086`, **not** `localhost`. Grafana reaches InfluxDB over the internal Docker network, by container name.
-3. Click **Save & test**. You should see *"datasource is working. N buckets found"*.
+The full-rate panels show *DAQ2 off* or stay empty until a node publishes the DAQ2 stream. The snapshot panels work either way.
 
-> **Permanent fix (recommended):** add `- INFLUXDB_TOKEN=${INFLUXDB_TOKEN}` under `grafana.environment` in `docker-compose.yml`, then run `docker compose up -d grafana`. The provisioned data source then gets the token automatically, and steps 1–3 aren't needed. Without it, the provisioned data source can lose its token again when Grafana restarts.
-
-### Build a first panel
-
-1. **Dashboards → New → New dashboard → Add visualization**, and select **InfluxDB (Flux)**.
-2. Paste a query, e.g. phase-A voltage for both nodes:
-
-   ```flux
-   from(bucket: "telemetry")
-     |> range(start: v.timeRangeStart, stop: v.timeRangeStop)
-     |> filter(fn: (r) => r._measurement == "mqtt_consumer")
-     |> filter(fn: (r) => r.subsystem == "voltage" and r.metric == "va")
-     |> filter(fn: (r) => r._field == "v")
-     |> keep(columns: ["_time", "_value", "node_id"])
-     |> aggregateWindow(every: v.windowPeriod, fn: mean, createEmpty: false)
-   ```
-
-3. Set the time range to *Last 5 minutes* and refresh. You should see the simulated sine waves.
+**Changing the dashboard:** you can edit it in Grafana, but provisioned dashboards are reloaded from the file, so changes are lost on restart unless you save them back. Use **Share → Export → Save to file** and replace `grafana/provisioning/dashboards/daqboard.json`, then commit it.
 
 ## 8. Data model (what's actually in InfluxDB)
 
-An MQTT message on `microgrid/<node_id>/<subsystem>/<metric>` with payload `{"ts": <unix_ns>, "v": <float>}` becomes:
+Every 5 s, each DAQ node publishes one 50 Hz cycle per channel: 20 samples at ~1 kHz, taken from its ~30 kHz acquisition stream. Each channel is a separate message on `microgrid/<node_id>/<subsystem>/<metric>`:
+
+```json
+{"ts": 1791345068887514368, "sync": 1, "dt_ns": 998424, "v": [231.45, 229.80, ...]}
+```
+
+| Payload field | Meaning |
+|---------------|---------|
+| `ts`    | Unix time (UTC) in ns of the first sample, from the node's PTP clock. Currents are sampled one ADC slot after voltages, so their `ts` is slightly later. |
+| `sync`  | `1` if the node's PTP servo was locked when the burst was captured, else `0`. Sent as an integer because Telegraf's JSON parser drops booleans. |
+| `dt_ns` | Spacing between samples in ns (the nearest whole number of ~30 kHz frames to 1 ms, e.g. `998424`). |
+| `v`     | 20 samples in V or A, rounded to 2 decimal places. |
+
+Telegraf flattens the `v` array, so each message becomes one burst point:
 
 | InfluxDB column | Value | Example |
 |-----------------|-------|---------|
 | `_measurement`  | always `mqtt_consumer` (Telegraf default) | `mqtt_consumer` |
-| `node_id` tag   | topic segment 2 | `node_1` |
-| `subsystem` tag | topic segment 3 | `voltage`, `current`, `ptp_status` |
-| `metric` tag    | topic segment 4 | `va`, `ib`, `offset_ns` |
-| `topic` tag     | full topic | `microgrid/node_1/voltage/va` |
-| `_field`        | `v` | `v` |
+| `node_id` tag   | topic segment 2 | `node_01`, `node_02` |
+| `subsystem` tag | topic segment 3 | `voltage`, `current` |
+| `metric` tag    | topic segment 4 | `phase_a`, `phase_b`, `phase_c` |
+| `topic` tag     | full topic | `microgrid/node_01/voltage/phase_a` |
+| `_field`        | `sync`, `dt_ns`, `v_0` … `v_19` | `v_7` |
 | `_time`         | the `ts` from the payload (the node's PTP time, **not** the time the server received it) | |
 
-> This differs from the design document (`documentation/InfluxDB`), which puts the subsystem in `_measurement` and uses a `measurement` tag. Write queries against the table above.
+Sample `k` was taken at `_time + k * dt_ns`. A Starlark processor in `telegraf.conf` does that expansion as data arrives: alongside each burst point it writes 20 points in the **`samples`** measurement, one per sample at its own timestamp, with the same tags and fields `v` and `sync`. Query those for waveforms:
+
+```flux
+from(bucket: "telemetry")
+  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)
+  |> filter(fn: (r) => r._measurement == "samples" and r.node_id == "node_01")
+  |> filter(fn: (r) => r.subsystem == "voltage" and r.metric == "phase_a" and r._field == "v")
+```
+
+The original burst points (`mqtt_consumer`, `v_0` … `v_19`) are still written, so existing dashboards keep working. Data stored before the processor was added only exists in burst form.
+
+This JSON path is the low-rate fallback. For the full ~30 kHz data, see [section 10](#10-full-rate-waveform-data-daq2-ingest).
+
+Node liveness is judged in Grafana from the time since each node's last sample. The firmware has no heartbeat or Last Will messages.
+
+Only trust cross-node comparisons where `sync` is `1` on both nodes. There are no separate `ptp_status` topics. The servo offset is printed on each node's debug UART, not published.
+
+The firmware can also publish every frame at the full ~30 kHz as a binary packet on `daq2/<node_id>/samples`. That stream is handled by `daq2-ingest`, not Telegraf: see [section 10](#10-full-rate-waveform-data-daq2-ingest).
 
 ## 9. Connecting real DAQ nodes
 
 1. Make sure the Mosquitto port is exposed to the LAN (see [step 4](#4-settings-you-may-need-to-change)), then `docker compose up -d`.
-2. Point the firmware at `<server-ip>:1883`. **No username/password is needed.** `mosquitto/config/mosquitto.conf` currently has `allow_anonymous true`.
-3. Publish to `microgrid/<node_id>/<subsystem>/<metric>` with a JSON payload `{"ts": <unix_ns>, "v": <number>}`, QoS 0.
+2. Set the broker address in the firmware's `app/node_config.h` (`BROKER_IP_ADDR0..3`, port `1883`), along with each node's `NODE_ID` and static IP. **No username/password is needed.** `mosquitto/config/mosquitto.conf` currently has `allow_anonymous true`.
+3. The firmware publishes the burst payload from [section 8](#8-data-model-whats-actually-in-influxdb) at QoS 0, client ID `mqttc-<node_id>`. Anything else publishing into `microgrid/#` must follow the same rules:
    - `ts` **must** be Unix time in nanoseconds. Wrong units put points in 1970 or the far future, where they won't show up in Grafana.
-   - Only single-sample payloads are supported. The burst format (`"v": [...]`) from the MQTT design doc is not handled by Telegraf yet.
+   - Numbers and arrays of numbers only. Telegraf's JSON parser drops booleans and strings.
+   - The PTP clock runs on TAI. The firmware converts to UTC with a fixed 37 s offset, so the historian server's clock should be on UTC (e.g. NTP) for Grafana's time ranges to line up.
+
+## 10. Full-rate waveform data (daq2-ingest)
+
+Nodes built with `MQTT_PUBLISH_DAQ2=ON` (CMake option in the firmware, off by default) also publish every acquisition packet, 64 frames at ~30 kHz, about 470 packets/s per node, as binary on `daq2/<node_id>/samples`. `daq2-ingest` decodes them and writes **every sample** to InfluxDB.
+
+> Whether a node can sustain this output alongside acquisition and PTP hasn't been verified on hardware yet. After flashing, check the node's UART: `daq2_drop` on the `MQTT` line and `drop`/`ov` on the `DAQ` line should stay at 0.
+
+### What's stored
+
+| Bucket | Retention | Measurement | Fields | One point per |
+|--------|-----------|-------------|--------|---------------|
+| `waveform` | `RAW_RETENTION` (default `7d`) | `voltage` | `a`, `b`, `c` | frame (~33 µs) |
+| | | `current` | `a`, `b`, `c` | frame |
+| | | `neutral` | `v`, `i` (neutral mode only) | frame |
+| | | `daq2_packet` | `sequence`, `first_index`, `frames`, `locked`, `time_valid`, `ptp_epoch`, `config_epoch`, `uncertainty_ns` | packet (64 frames) |
+| `waveform_1s` | forever | `voltage`, `current`, `neutral` | `<f>_rms`, `<f>_mean`, `<f>_min`, `<f>_max` for each field, plus `frames`, `locked` | UTC second |
+| | | `daq2_ingest` | the service's stats counters | 10 s |
+
+All points are tagged `node_id`.
+
+- **Units.** Raw values are **integers in mV and mA** (`RAW_FORMAT=int`, the default), because InfluxDB compresses integers far better than floats. The precision is the same 0.001 V/A either way. Divide by 1000 for V and A. The `waveform_1s` values are floats in V and A.
+- **Timestamps.** Each point is at its exact sample time. Voltages and currents are sampled in different ADC slots, so `current` points are ~16.6 µs after the matching `voltage` points. Don't join them on exact `_time`.
+- **Only trustworthy data is written.** Packets without a valid timestamp (e.g. while the PTP clock steps) are skipped and counted as `invalid_time`. `locked` records whether the PTP servo was locked.
+- **Per-second aggregates** are aligned to UTC seconds. `frames` is ~30048 for a complete second. Fewer means a partial second (start-up, a gap or a restart). `locked` is `1` only if every packet in that second was locked.
+
+### Querying
+
+Use `waveform_1s` for anything longer than a few seconds. A single raw channel is 30,000 points per second, which Grafana can't plot over long ranges. Raw data is for zooming in:
+
+```flux
+from(bucket: "waveform")
+  |> range(start: -2s)
+  |> filter(fn: (r) => r._measurement == "voltage" and r.node_id == "node_01" and r._field == "a")
+  |> map(fn: (r) => ({r with _value: float(v: r._value) / 1000.0}))
+```
+
+Long-term RMS:
+
+```flux
+from(bucket: "waveform_1s")
+  |> range(start: -24h)
+  |> filter(fn: (r) => r._measurement == "voltage" and r._field == "a_rms")
+```
+
+Use `daq2_packet` to check data quality. Gaps in `first_index` within one `config_epoch` mean frames the node acquired but never delivered.
+
+### Disk space
+
+Measured with synthetic 50 Hz data plus realistic noise: raw data takes about **1.6 bytes per value** as integers (the default), or ~7.9 bytes as floats. Two nodes at full rate store 360,000 values/s:
+
+| Raw retention (2 nodes) | Disk for `waveform` |
+|-------------------------|---------------------|
+| 1 day   | ~51 GB |
+| 7 days (default) | ~360 GB |
+| 14 days | ~710 GB |
+| 30 days | ~1.5 TB |
+
+Scale linearly with the number of nodes. `waveform_1s` is tiny by comparison (~1 MB/day). Real signals may compress somewhat differently, so check actual usage after the first day with `docker exec influxdb du -sh /var/lib/influxdb2/engine/data` and leave headroom: InfluxDB needs free space for compactions.
+
+`RAW_RETENTION` only applies when the `waveform` bucket is first created. To change it later:
+
+```bash
+docker exec influxdb influx bucket update --id $(docker exec influxdb influx bucket list --name waveform --hide-headers | cut -f1) --retention 14d
+```
+
+### Other settings
+
+These have defaults in `daq2-ingest/ingest.py` and can be overridden in the service's `environment:` in `docker-compose.yml`:
+
+| Variable | Default | Meaning |
+|----------|---------|---------|
+| `RAW_FORMAT` | `int` | `int` (mV/mA integers) or `float` (V/A) for raw values |
+| `AGG_RETENTION` | `0` | Retention of `waveform_1s`; `0` keeps it forever |
+| `TAI_UTC_OFFSET_S` | `37` | Subtracted from the nodes' TAI timestamps, matching the firmware's JSON path |
+| `MAX_BUFFERED_LINES` | `2000000` | Raw lines held in memory if InfluxDB falls behind (~10 s at two nodes) before the oldest are dropped |
+| `BATCH_LINES` / `FLUSH_SECONDS` | `20000` / `1.0` | Write batching |
+
+### Testing
+
+Unit tests, run in a throwaway container:
+
+```bash
+cd daq2-ingest
+docker run --rm -v "$PWD":/app -w /app python:3.12-slim \
+  sh -c "pip install -q -r requirements.txt pytest && python -m pytest -q"
+```
+
+Load test: publish synthetic packets for two nodes at the real rate, then watch `docker compose logs -f daq2-ingest`:
+
+```bash
+docker run --rm --network ug-historian_default -v "$PWD/daq2-ingest":/app -w /app -e PYTHONPATH=/app \
+  python:3.12-slim sh -c "pip install -q -r requirements.txt && python tests/load.py --host mosquitto --nodes 2 --seconds 60"
+```
+
+The load test writes to nodes `load_01`/`load_02`, which stay in the buckets until retention expires.
 
 ---
 
@@ -225,6 +332,8 @@ Then open `http://localhost:8086` and log in with `INFLUXDB_ADMIN_USER` / `INFLU
 ```bash
 docker compose ps                 # status
 docker compose restart telegraf   # e.g. after editing telegraf.conf
+docker compose up -d --build daq2-ingest   # after changing daq2-ingest code
+docker compose logs -f daq2-ingest          # stats line every 10 s
 docker compose down               # stop everything (data is kept)
 docker compose up -d              # start again
 docker compose pull && docker compose up -d   # update images
@@ -245,22 +354,22 @@ docker compose up -d
 
 | Symptom | Likely cause / fix |
 |---------|--------------------|
-| Grafana "Save & test" fails with *unauthorized* | Wrong token. It must match `INFLUXDB_TOKEN` **as it was at first start**. If you've changed `.env` since, either reset or copy the token from the InfluxDB UI (Load Data → API Tokens). |
-| Grafana "Save & test" fails with *connection refused* | URL is `localhost`; it must be `http://influxdb:8086`. |
+| Grafana "Save & test" fails with *unauthorized* | Wrong token. It must match `INFLUXDB_TOKEN` **as it was at first start**. If you've changed `.env` since, either reset or copy the token from the InfluxDB UI (Load Data → API Tokens) into `.env` and run `docker compose up -d grafana`. |
 | Telegraf logs `401 Unauthorized` | Same token mismatch as above. Fix `.env`, then `docker compose up -d telegraf`. |
 | Grafana login fails with the `.env` password | `GRAFANA_ADMIN_PASSWORD` was changed after first start. Reset it with `docker exec -it grafana grafana cli admin reset-admin-password <new>`. |
 | InfluxDB container keeps restarting | `INFLUXDB_ADMIN_PASSWORD` is shorter than 8 characters. Fix it, then `docker compose down -v && docker compose up -d`. |
 | Can't reach Grafana / MQTT from another machine | Check the port binding (step 4). If `ufw` is enabled: `sudo ufw allow 3000/tcp` and `sudo ufw allow 1883/tcp`. Note that Docker-published ports can bypass `ufw` rules, so don't rely on `ufw` alone to *block* them. |
 | Data in mosquitto_sub but not in Grafana | Check `docker compose logs telegraf` for JSON parse errors. Check that `ts` is in nanoseconds and the Grafana time range covers it. |
-| `sim.py` fails with `ValueError: Unsupported callback API version` | paho-mqtt 2.x is installed. Use the apt package or `paho-mqtt<2` (see step 6). |
+| `daq2-ingest` stats show `mqtt_drops` or `buffer_drop_lines` above 0 | InfluxDB isn't keeping up with full-rate writes. Check the server's CPU and disk I/O. |
+| `daq2-ingest` stats show `invalid_time` above 0 | The node's PTP clock stepped or wasn't valid, so those packets were skipped. Normal for a few seconds after a node boots. |
+| `daq2-ingest` stats show `gap_frames` above 0 | The node acquired data it never delivered. Check the node's UART for `daq2_drop`/`drop`. |
 
-## Not yet implemented (vs. the design docs)
+## Not yet implemented
 
 - MQTT authentication/ACLs: the broker allows anonymous clients.
-- The `telemetry_1m` downsampled bucket and the `downsample_1m` Flux task.
+- The `telemetry_1m` bucket and `downsample_1m` Flux task for the JSON snapshots. Long-term aggregates come from `daq2-ingest` (`waveform_1s`) instead.
 - A separate read-only InfluxDB token for Grafana and a write-only token for Telegraf. Both currently use the admin token.
-- Burst payload ingestion.
-- Provisioned Grafana dashboards. Dashboards are built by hand and stored in the `grafana-data` volume.
+- PTP status topics (`ptp_status/*`). The per-burst `sync` flag replaces them.
 
 ## Repository layout
 
@@ -271,6 +380,10 @@ docker compose up -d
 ├── mosquitto/config/mosquitto.conf            # broker config
 ├── telegraf/telegraf.conf                     # MQTT → InfluxDB mapping
 ├── grafana/provisioning/datasources/          # auto-provisioned Grafana data source
-├── sim/sim.py                                 # fake DAQ node publisher for testing
+├── grafana/provisioning/dashboards/           # auto-provisioned DAQboard dashboard
+├── daq2-ingest/                               # full-rate DAQ2 decoder service (Python)
+│   ├── daq2.py                                # packet decoding, line protocol, 1 s aggregates
+│   ├── ingest.py                              # MQTT subscriber and batched InfluxDB writer
+│   └── tests/                                 # unit tests and a full-rate load generator
 └── documentation/                             # MQTT and InfluxDB design docs (LaTeX)
 ```
