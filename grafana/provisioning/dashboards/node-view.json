@@ -8,7 +8,17 @@
   "schemaVersion": 39,
   "version": 1,
   "editable": true,
-  "refresh": "5s",
+  "refresh": "1s",
+  "timepicker": {
+    "refresh_intervals": [
+      "1s",
+      "5s",
+      "10s",
+      "30s",
+      "1m",
+      "5m"
+    ]
+  },
   "time_options": [],
   "time": {
     "from": "now-15m",

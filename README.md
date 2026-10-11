@@ -152,7 +152,7 @@ If the page doesn't load from another machine, see [Troubleshooting](#troublesho
 Both are provisioned from `grafana/provisioning/`, so there's nothing to set up by hand:
 
 - **InfluxDB (Flux)** data source (`datasources/influxdb.yml`), with the token taken from `INFLUXDB_TOKEN` in `.env`. Check it under **Connections → Data sources → InfluxDB (Flux) → Save & test**. You should see *"datasource is working"*. Its uid is pinned to `PF6CD3C7EE64CF7D1`, so the dashboard and `grafana_export.py` can reference it.
-- **Node View** dashboard (`dashboards/node-view.json`), in the **Microgrid** folder: everything an operator needs to know about one node. The top bar has three selectors: `node_id`, **Phase** (3-phase or phase A, B or C) and **Voltage / current** (RMS or peak).
+- **Node View** dashboard (`dashboards/node-view.json`), in the **Microgrid** folder: everything an operator needs to know about one node. The top bar has three selectors: `node_id`, **Phase** (3-phase or phase A, B or C) and **Voltage / current** (RMS or peak). It refreshes every second by default; a full refresh takes well under a second.
 
 | Part | What it shows |
 |------|---------------|
