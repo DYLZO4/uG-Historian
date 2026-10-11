@@ -2,6 +2,9 @@ apiVersion: 1
 
 datasources:
   - name: InfluxDB (Flux)
+    # Fixed so provisioned dashboards and grafana_export.py can reference it. This is the uid
+    # Grafana generated for this data source before it was pinned, so existing panels keep working.
+    uid: PF6CD3C7EE64CF7D1
     type: influxdb
     access: proxy
     url: http://influxdb:8086

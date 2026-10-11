@@ -62,6 +62,8 @@ services:
       - ./grafana/provisioning:/etc/grafana/provisioning
     environment:
       - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD}
+      # Read by the provisioned data source (grafana/provisioning/datasources/influxdb.yml)
+      - INFLUXDB_TOKEN=${INFLUXDB_TOKEN}
       - GF_AUTH_ANONYMOUS_ENABLED=false
       - GF_DASHBOARDS_MIN_REFRESH_INTERVAL=1s
     depends_on:

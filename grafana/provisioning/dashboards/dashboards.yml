@@ -1,0 +1,11 @@
+apiVersion: 1
+
+providers:
+  - name: uG-Historian
+    folder: Microgrid
+    type: file
+    # Dashboards can be edited in Grafana, but changes are lost on restart unless exported
+    # back into this directory (Share → Export → Save to file).
+    allowUiUpdates: true
+    options:
+      path: /etc/grafana/provisioning/dashboards
