@@ -234,6 +234,14 @@ Only trust cross-node comparisons where `sync` is `1` on both nodes.
 
 Telegraf stores these as one `mqtt_consumer` point per Sync with `subsystem = ptp_status`, `metric = servo`, and those fields.
 
+**Firmware version.** Once per connection, after its first PTP clock step, each node publishes the firmware it runs (`git describe` at build time, ending in `-dirty` for uncommitted changes) on `microgrid/<node_id>/status/firmware`, retained:
+
+```json
+{"ts": 1791782417800117923, "firmware": "8338d6b"}
+```
+
+Check every node with `docker exec mosquitto mosquitto_sub -t 'microgrid/+/status/firmware' -v -W 2`. Telegraf keeps `firmware` as a string field (`json_string_fields` in `telegraf.conf`; other strings are dropped), with `subsystem = status`, `metric = firmware`.
+
 The firmware can also publish every frame at the full ~30 kHz as a binary packet on `daq2/<node_id>/samples`. That stream is handled by `daq2-ingest`, not Telegraf: see [section 10](#10-full-rate-waveform-data-daq2-ingest).
 
 ## 9. Connecting real DAQ nodes

@@ -20,7 +20,8 @@ MQTT defines three quality of service (QoS) levels governing delivery guarantees
 QoS 2 (exactly once) is not used as the four-way handshake overhead is rarely justified in practice.
 
 \subsection{Retained Messages}
-No messages are retained. Retaining high-frequency samples would deliver a burst of stale data to every new subscriber.
+\label{sec:retained}
+Measurements are not retained, as retaining high-frequency samples would deliver a burst of stale data to every new subscriber. The one retained message is the firmware version, published once per connection on \path{microgrid/<node_id>/status/firmware} as \texttt{\{"ts": <Unix UTC ns>, "firmware": "<git describe>"\}}, so that any subscriber can see which firmware each node runs. The version is taken from \texttt{git describe} at build time and ends in \texttt{-dirty} if the source had uncommitted changes. It is sent after the node's first PTP clock step, so that \texttt{ts} is real time, and Telegraf keeps \texttt{firmware} as a string field (\texttt{json\_string\_fields}).
 
 On each connection, the firmware publishes an empty retained message to \path{microgrid/<node_id>/status/heartbeat}. This deletes any retained heartbeat left on the broker by earlier firmware versions, and can be removed once no broker holds one.
 

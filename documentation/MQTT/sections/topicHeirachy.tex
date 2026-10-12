@@ -35,6 +35,10 @@ and, on every PTP Sync, one status topic (Section~\ref{sec:ptpstatus}):
 \begin{lstlisting}
   microgrid/node_01/ptp_status/servo
 \end{lstlisting}
+and, once per connection, the firmware version, retained (Section~\ref{sec:retained}):
+\begin{lstlisting}
+  microgrid/node_01/status/firmware
+\end{lstlisting}
 
 Optionally, when built with \texttt{MQTT\_PUBLISH\_DAQ2}, a node also publishes its full-rate binary stream on \texttt{daq2/<node\_id>/samples} (Section~\ref{sec:daq2}). This topic is deliberately outside \texttt{microgrid/\#}, so that the historian bridge, which expects JSON, does not subscribe to it.
 

@@ -87,6 +87,8 @@ PTP status messages (\texttt{subsystem} = \texttt{ptp\_status}, \texttt{metric} 
   \end{center}
 \end{table}
 
+Each node's firmware version (\texttt{subsystem} = \texttt{status}, \texttt{metric} = \texttt{firmware}) is stored as one point per MQTT connection with the string field \texttt{firmware}, the output of \texttt{git describe} when the firmware was built. It is the only string field kept, through Telegraf's \texttt{json\_string\_fields}.
+
 \subsection{Timestamp}
 The point timestamp is the payload's \texttt{ts}: the time of the first sample in the burst, from the node's PTP-disciplined clock, written at nanosecond precision. The historian does not substitute broker receive time or Telegraf processing time. The time of sample $k$ is reconstructed at query time as \texttt{\_time} $+ k \cdot$ \texttt{dt\_ns}.
 

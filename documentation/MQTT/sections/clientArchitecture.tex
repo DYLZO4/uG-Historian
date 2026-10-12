@@ -10,6 +10,7 @@ Acquisition and publishing run in separate FreeRTOS tasks:
   \item The MQTT task is the sole consumer of the ready queue. Every 5~s, it collects one 50~Hz cycle (20 samples at approximately 1~kHz) of each channel across consecutive packets, serialises one JSON burst per channel, and publishes the six messages at QoS~0.
   \item Unless built with \texttt{MQTT\_PUBLISH\_DAQ2} off, the MQTT task also publishes every packet in binary on \texttt{daq2/<node\_id>/samples} (approximately 470 per second), at QoS~0. A packet that cannot be queued in the lwIP output buffer is dropped and counted rather than waited for.
   \item After each PTP servo update (on every Sync, about once a second), the MQTT task publishes the servo's state on \path{microgrid/<node_id>/ptp_status/servo}.
+  \item Once per connection, after the first PTP clock step, it publishes the firmware version on \path{microgrid/<node_id>/status/firmware}, retained.
   \item Every packet is released back to the pool immediately after use, so acquisition never runs out of slots.
 \end{enumerate}
 
