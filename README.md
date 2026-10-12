@@ -247,7 +247,7 @@ The firmware can also publish every frame at the full ~30 kHz as a binary packet
 
 ## 10. Full-rate waveform data (daq2-ingest)
 
-Nodes built with `MQTT_PUBLISH_DAQ2=ON` (CMake option in the firmware, off by default) also publish every acquisition packet, 64 frames at ~30 kHz, about 470 packets/s per node, as binary on `daq2/<node_id>/samples`. `daq2-ingest` decodes them and writes **every sample** to InfluxDB.
+Nodes built with `MQTT_PUBLISH_DAQ2=ON` (CMake option in the firmware, on by default) also publish every acquisition packet, 64 frames at ~30 kHz, about 470 packets/s per node, as binary on `daq2/<node_id>/samples`. `daq2-ingest` decodes them and writes **every sample** to InfluxDB.
 
 > Verified on hardware: a node sustains this (~470 packets/s, 6.3 Mbit/s) alongside acquisition and PTP with no drops. After flashing, confirm it on the node's UART: `daq2_drop` on the `MQTT` line and `drop`/`ov` on the `DAQ` line should stay at 0.
 
