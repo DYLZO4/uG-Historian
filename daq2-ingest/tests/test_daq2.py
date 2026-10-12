@@ -118,7 +118,7 @@ def test_gap_and_invalid_time_counting():
         def __init__(self):
             self.lines = {}
 
-        def put(self, bucket, lines):
+        def put(self, bucket, lines, sample_ns=None):
             self.lines.setdefault(bucket, []).extend(lines)
 
     ingest.stats.take()
@@ -142,7 +142,7 @@ def test_rate_adjusted_packets_kept_only_when_time_is_continuous():
         def __init__(self):
             self.lines = []
 
-        def put(self, bucket, lines):
+        def put(self, bucket, lines, sample_ns=None):
             if bucket == ingest.RAW_BUCKET:
                 self.lines.extend(lines)
 
@@ -175,7 +175,7 @@ def test_unsynchronised_clock_is_skipped():
         def __init__(self):
             self.lines = []
 
-        def put(self, bucket, lines):
+        def put(self, bucket, lines, sample_ns=None):
             self.lines.extend(lines)
 
     ingest.stats.take()
@@ -225,6 +225,81 @@ def test_writer_posts_concurrently_and_retries_failures(monkeypatch):
     assert sorted(written) == sorted(lines)    # every line exactly once, the failed batch included
     assert peak[0] > 1                         # posts overlapped
 
+
+
+def test_last_sample_is_the_last_frames_latest_column():
+    p = daq2.decode(packets.build(packets.sine_block(0, 64), T0))
+    last = p.frame_times(TAI)[-1] + max(p.offset_ns[:p.channels])
+    assert p.last_sample_ns(TAI) == last
+    # Currents are the last-sampled column, one ADC slot after the voltages
+    assert max(p.offset_ns[:p.channels]) == p.offset_ns[daq2.IA]
+
+
+def test_latency_measured_from_newest_sample_to_arrival_and_storage(monkeypatch):
+    ingest = pytest.importorskip("ingest")
+
+    class FakeWriter:
+        def __init__(self):
+            self.marks = []
+
+        def put(self, bucket, lines, sample_ns=None):
+            if sample_ns is not None:
+                self.marks.append(sample_ns)
+
+    ingest.latency.take()
+    nodes, w = {}, FakeWriter()
+    now_tai = time.time_ns() + ingest.TAI_UTC_OFFSET_NS
+    payload = packets.build(packets.sine_block(0, 64), now_tai)
+    newest = daq2.decode(payload).last_sample_ns(ingest.TAI_UTC_OFFSET_NS)
+    ingest.process(nodes, w, "daq2/node_01/samples", payload, received_ns=newest + 3_000_000)
+    assert w.marks == [newest]
+    s = ingest.latency.take()
+    assert s["latency_mqtt_p50_ms"] == s["latency_mqtt_max_ms"] == 3.0
+    assert "latency_stored_p50_ms" not in s          # nothing written yet
+    assert ingest.latency.take() == {}               # take() resets
+
+
+def test_writer_reports_storage_latency_once_per_packet_after_retry(monkeypatch):
+    ingest = pytest.importorskip("ingest")
+
+    real_sleep = time.sleep
+    monkeypatch.setattr(ingest, "BATCH_LINES", 100)
+    monkeypatch.setattr(ingest, "FLUSH_SECONDS", 0.05)
+    monkeypatch.setattr(ingest.time, "sleep", lambda s: real_sleep(min(s, 0.05)))
+    failed, written = [], []
+
+    def fake_write(self, bucket, lines):
+        if not failed:                         # the first batch fails once
+            failed.append(True)
+            return False
+        written.extend(lines)
+        return True
+
+    monkeypatch.setattr(ingest.Writer, "write", fake_write)
+    recorded = []
+    monkeypatch.setattr(ingest.latency, "add", lambda kind, d: recorded.extend((kind, x) for x in d))
+    w = ingest.Writer()
+    sample_ns = time.time_ns() - 5_000_000
+    for i in range(10):                        # 10 packets of 60 lines, crossing batch boundaries
+        w.put(ingest.RAW_BUCKET, [f"p{i} line {j}" for j in range(60)], sample_ns)
+    w.start()
+    deadline = time.time() + 10
+    while len(written) < 600 and time.time() < deadline:
+        real_sleep(0.02)
+    real_sleep(0.1)
+    assert len(written) == 600
+    assert len(recorded) == 10 and all(k == "stored" for k, _ in recorded)
+    assert all(5_000_000 <= d < 5_000_000_000 for _, d in recorded)
+
+
+def test_latency_summary_percentiles():
+    ingest = pytest.importorskip("ingest")
+    lat = ingest.Latency()
+    lat.add("stored", [i * 1_000_000 for i in range(1, 101)])   # 1..100 ms
+    s = lat.take()
+    assert s["latency_stored_max_ms"] == 100.0
+    assert s["latency_stored_p50_ms"] == 50.5
+    assert 99 <= s["latency_stored_p99_ms"] <= 100
 
 def test_router_balances_nodes_and_keeps_them_in_place():
     ingest = pytest.importorskip("ingest")

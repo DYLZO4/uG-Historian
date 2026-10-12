@@ -26,6 +26,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+import numpy as np
 import paho.mqtt.client as mqtt
 
 import daq2
@@ -104,6 +105,40 @@ class Stats:
 stats = Stats()
 
 
+class Latency:
+    """Delays from a packet's newest sample to its arrival over MQTT and to InfluxDB confirming
+    its write, summarised per stats interval. Both ends are UTC: the node's PTP time and the
+    server's clock, which must follow the same grandmaster (ptp4l + phc2sys) for these to mean
+    anything. Not clamped, so a negative value exposes a clock that isn't synchronised."""
+
+    KINDS = ("mqtt", "stored")
+
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.delays = {k: [] for k in self.KINDS}
+
+    def add(self, kind, delays_ns):
+        with self.lock:
+            self.delays[kind].extend(delays_ns)
+
+    def take(self):
+        """Median, 99th percentile and maximum in ms per kind; kinds with no data are left out."""
+        with self.lock:
+            delays, self.delays = self.delays, {k: [] for k in self.KINDS}
+        out = {}
+        for kind, d in delays.items():
+            if d:
+                ms = np.asarray(d, dtype=np.float64) / 1e6
+                p50, p99 = np.percentile(ms, (50, 99))
+                out[f"latency_{kind}_p50_ms"] = round(float(p50), 3)
+                out[f"latency_{kind}_p99_ms"] = round(float(p99), 3)
+                out[f"latency_{kind}_max_ms"] = round(float(ms.max()), 3)
+        return out
+
+
+latency = Latency()
+
+
 # --- InfluxDB ---
 
 def influx_request(method, path, body=None, headers=None):
@@ -154,6 +189,9 @@ class Writer(threading.Thread):
     writer is busy, new lines wait in `pending`, where MAX_BUFFERED_LINES bounds memory. A failed
     batch goes back to the front of `pending` and is retried; order between batches doesn't
     matter, as every point carries its own timestamp.
+
+    `marks` records where each packet's lines end in `pending`, with its newest sample time, so
+    the batch that completes a packet can report how long after sampling it was stored.
     """
 
     def __init__(self, threads=None):
@@ -161,13 +199,16 @@ class Writer(threading.Thread):
         threads = threads or WRITE_THREADS
         self.cond = threading.Condition()
         self.pending = {RAW_BUCKET: [], AGG_BUCKET: []}
+        self.marks = {RAW_BUCKET: [], AGG_BUCKET: []}   # (end index in pending, sample ns)
         self.jobs = queue.Queue(maxsize=threads)
         for n in range(threads):
             threading.Thread(target=self._post_jobs, daemon=True, name=f"post-{n}").start()
 
-    def put(self, bucket, lines):
+    def put(self, bucket, lines, sample_ns=None):
         with self.cond:
             self.pending[bucket].extend(lines)
+            if sample_ns is not None:
+                self.marks[bucket].append((len(self.pending[bucket]), sample_ns))
             self._shed()
             if len(self.pending[bucket]) >= BATCH_LINES:
                 self.cond.notify()
@@ -179,6 +220,8 @@ class Writer(threading.Thread):
         if excess > 0:
             shed = min(excess, len(self.pending[RAW_BUCKET]))
             del self.pending[RAW_BUCKET][:shed]
+            self.marks[RAW_BUCKET] = [(end - shed, t) for end, t in self.marks[RAW_BUCKET]
+                                      if end > shed]
             stats.add(buffer_drop_lines=shed)
 
     def run(self):
@@ -186,20 +229,33 @@ class Writer(threading.Thread):
             with self.cond:
                 self.cond.wait(FLUSH_SECONDS)
                 batches, self.pending = self.pending, {b: [] for b in self.pending}
+                marks, self.marks = self.marks, {b: [] for b in self.marks}
             for bucket, lines in batches.items():
+                bucket_marks, m = marks[bucket], 0
                 for i in range(0, len(lines), BATCH_LINES):
+                    end = i + BATCH_LINES
+                    times = []
+                    while m < len(bucket_marks) and bucket_marks[m][0] <= end:
+                        times.append(bucket_marks[m][1])
+                        m += 1
                     # Blocks while every writer is busy; meanwhile put() keeps filling pending
-                    self.jobs.put((bucket, lines[i:i + BATCH_LINES]))
+                    self.jobs.put((bucket, lines[i:end], times))
 
     def _post_jobs(self):
         while True:
-            bucket, lines = self.jobs.get()
-            if not self.write(bucket, lines):
-                # Put it back ahead of newer data, then back off before taking more work
-                with self.cond:
-                    self.pending[bucket][:0] = lines
-                    self._shed()
-                time.sleep(1)
+            bucket, lines, times = self.jobs.get()
+            if self.write(bucket, lines):
+                stored = time.time_ns()
+                latency.add("stored", [stored - t for t in times])
+                continue
+            # Put it back ahead of newer data, then back off before taking more work
+            with self.cond:
+                self.pending[bucket][:0] = lines
+                n = len(lines)
+                self.marks[bucket] = [(n, t) for t in times] + \
+                    [(end + n, t) for end, t in self.marks[bucket]]
+                self._shed()
+            time.sleep(1)
 
     def write(self, bucket, lines):
         q = urllib.parse.urlencode({"org": INFLUX_ORG, "bucket": bucket, "precision": "ns"})
@@ -259,7 +315,7 @@ def time_is_continuous(node, packet):
     return abs(packet.first_time_ns - predicted) <= TIME_CONTINUITY_NS
 
 
-def process(nodes, writer, topic, payload):
+def process(nodes, writer, topic, payload, received_ns=None):
     parts = topic.split("/")
     node_id = parts[1] if len(parts) == 3 else "unknown"
     try:
@@ -298,8 +354,11 @@ def process(nodes, writer, topic, payload):
         stats.add(time_flagged=1)
     node.last_written = (packet.first_output_index, packet.first_time_ns, packet.period_q32_ns,
                          packet.config_epoch)
+    newest_ns = packet.last_sample_ns(utc_offset_ns)
+    if received_ns is not None:
+        latency.add("mqtt", [received_ns - newest_ns])
     writer.put(RAW_BUCKET, daq2.raw_lines(packet, node_id, utc_offset_ns, integer=RAW_INTEGER) +
-               [daq2.packet_line(packet, node_id, utc_offset_ns)])
+               [daq2.packet_line(packet, node_id, utc_offset_ns)], newest_ns)
     done = node.aggregator.add(packet, utc_offset_ns)
     if done:
         writer.put(AGG_BUCKET, done)
@@ -346,15 +405,16 @@ def worker_main(index, inbox):
         s.pop("mqtt_drops")   # the receiver counts those
         s["queue_depth"] = inbox.qsize()
         s["write_ms"] = round(s["write_ms"], 1)
+        s.update(latency.take())
         return s
 
     threading.Thread(target=report_stats, args=(writer, str(index), snapshot), daemon=True,
                      name="stats").start()
     nodes = {}
     while True:
-        topic, payload = inbox.get()
+        topic, payload, received_ns = inbox.get()
         try:
-            process(nodes, writer, topic, payload)
+            process(nodes, writer, topic, payload, received_ns)
         except Exception:
             log.exception("failed to process packet from %s", topic)
 
@@ -401,11 +461,12 @@ def main():
         log.info("subscribed to %s on %s:%s", MQTT_TOPIC, MQTT_HOST, MQTT_PORT)
 
     def on_message(_client, _userdata, msg):
+        received_ns = time.time_ns()
         parts = msg.topic.split("/")
         node_id = parts[1] if len(parts) == 3 else "unknown"
         received[0] += 1
         try:
-            inboxes[router.worker(node_id)].put_nowait((msg.topic, msg.payload))
+            inboxes[router.worker(node_id)].put_nowait((msg.topic, msg.payload, received_ns))
         except queue.Full:
             stats.add(mqtt_drops=1)
 

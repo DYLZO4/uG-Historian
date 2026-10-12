@@ -162,7 +162,7 @@ Both are provisioned from `grafana/provisioning/`, so there's nothing to set up 
 | Voltage / Current | RMS or peak, per second. **Zoom in to 5 s or less** (drag across the graph) and they switch to the raw waveform for that moment, one sample per millisecond, the finest Grafana's time axis resolves. The legend says which is shown (`phase_a RMS`, `phase_a samples`). Raw data only goes back as far as `RAW_RETENTION`. Voltages are phase-to-earth with the default shield profile. |
 | PTP | Offset from the grandmaster, path delay, frequency correction (one point per Sync), and the firmware's sample-timing uncertainty |
 | Full-rate waveform | The latest ~100 ms of voltage and current at the full ~30 kHz, ending ~2 s ago so every write has landed. Ignores the dashboard time range. |
-| Diagnostics (collapsed) | **Completeness**: frames stored as a share of frames the node acquired over the minute ending 5 s ago (the newest seconds are skipped because the writer threads can store batches out of order). Also `daq2-ingest` loss counters across all nodes, and frames per second over time. |
+| Diagnostics (collapsed) | **Completeness**: frames stored as a share of frames the node acquired over the minute ending 5 s ago (the newest seconds are skipped because the writer threads can store batches out of order). Also `daq2-ingest` loss counters across all nodes, frames per second over time, and **ingest latency** (median and 99th percentile from sample to MQTT arrival and to storage, see [Latency](#latency)). |
 
 The **Phase** selector applies to everything phase-specific: power, power factor, and the voltage, current and waveform graphs show only the selected phase, or all three for 3-phase. Each phase keeps its colour (A green, B yellow, C blue) whichever is shown.
 
@@ -341,6 +341,25 @@ Measured on the home test server (12 threads, 7.7 GB RAM), with one real node pl
 | 7 | ~9% of packets dropped: the server ran out of CPU | load average 16 on 12 threads |
 
 Budget roughly **1.5 cores of InfluxDB plus 0.6 cores of ingest per node**, plus ~25 GB/day of disk. More nodes need more cores, not configuration changes.
+
+### Latency
+
+Every 10 s, each worker's `daq2_ingest` point also records how long packets took to arrive and to be stored. Each delay is measured from the packet's newest sample, in milliseconds:
+
+| Field | Delay from the newest sample to |
+|-------|---------------------------------|
+| `latency_mqtt_p50_ms`, `_p99_ms`, `_max_ms` | the packet arriving over MQTT (node processing, network, broker) |
+| `latency_stored_p50_ms`, `_p99_ms`, `_max_ms` | InfluxDB confirming the write that completes the packet (adds the worker queue, batching and the write) |
+
+A sample also waits up to one packet (64 frames, ~2.1 ms) on the node before its packet is built.
+
+Both delays compare the node's PTP time with the server's clock, so the server must follow the same grandmaster (`ptp4l` + `phc2sys`). Values aren't clamped, so a negative latency means the server's clock isn't synchronised. To pull a test window:
+
+```flux
+from(bucket: "waveform_1s")
+  |> range(start: 2026-10-13T00:00:00Z, stop: 2026-10-14T00:00:00Z)
+  |> filter(fn: (r) => r._measurement == "daq2_ingest" and r._field =~ /^latency_/)
+```
 
 ### Testing
 

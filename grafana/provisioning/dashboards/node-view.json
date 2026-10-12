@@ -1317,6 +1317,64 @@
             }
           },
           "description": "Lowest per-second frame count in each interval. ~30048 is complete; dips mark lost data."
+        },
+        {
+          "id": 20,
+          "type": "timeseries",
+          "title": "Ingest latency (all nodes)",
+          "datasource": {
+            "type": "influxdb",
+            "uid": "PF6CD3C7EE64CF7D1"
+          },
+          "gridPos": {
+            "x": 0,
+            "y": 44,
+            "w": 24,
+            "h": 8
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": {
+                "type": "influxdb",
+                "uid": "PF6CD3C7EE64CF7D1"
+              },
+              "query": "from(bucket: \"waveform_1s\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"daq2_ingest\" and r._field =~ /^latency_(mqtt|stored)_p(50|99)_ms$/)\n  |> group(columns: [\"_field\"])\n  |> aggregateWindow(every: v.windowPeriod, fn: max, createEmpty: false)\n  |> map(fn: (r) => ({r with _field:\n      if r._field == \"latency_mqtt_p50_ms\" then \"Arrival, median\"\n      else if r._field == \"latency_mqtt_p99_ms\" then \"Arrival, 99th pct\"\n      else if r._field == \"latency_stored_p50_ms\" then \"Stored, median\"\n      else if r._field == \"latency_stored_p99_ms\" then \"Stored, 99th pct\"\n      else r._field}))\n  |> keep(columns: [\"_time\", \"_value\", \"_field\"])"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "custom": {
+                "drawStyle": "line",
+                "lineWidth": 1,
+                "showPoints": "never",
+                "spanNulls": 30000,
+                "fillOpacity": 0
+              },
+              "color": {
+                "mode": "palette-classic"
+              },
+              "unit": "ms",
+              "displayName": "${__field.labels._field}"
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "right",
+              "showLegend": true,
+              "calcs": [
+                "mean",
+                "max"
+              ]
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "none"
+            }
+          },
+          "description": "Delay from each full-rate packet's newest sample to its arrival over MQTT, and to InfluxDB confirming its write, from daq2-ingest's 10 s stats (worst worker in each interval). Needs the server clock synchronised to the grandmaster; negative values mean it isn't."
         }
       ]
     }

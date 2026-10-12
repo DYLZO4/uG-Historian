@@ -71,6 +71,12 @@ class Packet:
         offset_s = (self.flags >> 16) & 0xFFFF
         return (offset_s - 0x10000 if offset_s & 0x8000 else offset_s) * 1_000_000_000
 
+    def last_sample_ns(self, tai_utc_offset_ns):
+        """UTC ns of the newest sample in the packet: the last frame's last-sampled column."""
+        last_frame = ((self.frames - 1) * self.period_q32_ns) >> 32
+        return (self.first_time_ns - tai_utc_offset_ns + last_frame +
+                max(self.offset_ns[:self.channels]))
+
     def frame_times(self, tai_utc_offset_ns):
         """UTC ns of column 0 for each frame, as int64."""
         i = np.arange(self.frames, dtype=np.uint64)
