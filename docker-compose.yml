@@ -42,6 +42,9 @@ services:
 
   daq2-ingest:
     build: ./daq2-ingest
+    # tini as PID 1 passes Docker's SIGTERM on, so ingest can flush what it holds and exit
+    # (a PID 1 ignores signals it has no handler for yet, e.g. during start-up)
+    init: true
     container_name: daq2-ingest
     depends_on:
       - mosquitto

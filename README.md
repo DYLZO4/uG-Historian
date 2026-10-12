@@ -335,10 +335,13 @@ These have defaults in `daq2-ingest/ingest.py` and can be overridden in the serv
 | `MAX_BUFFERED_LINES` | `2000000` | Raw lines each worker holds in memory if InfluxDB falls behind before the oldest are dropped |
 | `WORKER_QUEUE_PACKETS` | `5000` | Packets queued per worker (~10 s of one node) before the receiver drops them (`mqtt_drops`) |
 | `BATCH_LINES` / `FLUSH_SECONDS` | `20000` / `1.0` | Write batching |
+| `SHUTDOWN_SECONDS` | `8` | Time allowed on stop to drain queues and write everything buffered |
 
 ### Capacity
 
 `daq2-ingest` runs as one receiver process (MQTT only) plus `INGEST_WORKERS` worker processes, so it uses multiple cores. Each worker's stats (covering the nodes assigned to it) appear in the logs and in `daq2_ingest` tagged `worker=<n>`, and the receiver's as `worker=receiver`.
+
+**Stopping and restarting.** `docker compose stop`/`restart`/`up -d` stop the service cleanly in under a second: it disconnects from MQTT, each worker processes what's queued, writes the second in progress (a partial `frames` count) and everything still buffered, then exits (`SHUTDOWN_SECONDS`, default 8 s, within Docker's 10 s). The log ends with `worker <n> stopped, everything written` per worker and `stopped`. `init: true` in `docker-compose.yml` is required for this: it puts a minimal init in front of Python as PID 1, which would otherwise ignore the stop signal until Docker kills it after 10 s. Data published while the service is down is still lost, as nodes publish at QoS 0.
 
 Measured on the home test server (12 threads, 7.7 GB RAM), with one real node plus synthetic ones:
 

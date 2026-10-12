@@ -20,6 +20,8 @@ import multiprocessing
 import os
 import queue
 import re
+import signal
+import sys
 import threading
 import time
 import urllib.error
@@ -67,6 +69,9 @@ WRITE_THREADS = env("WRITE_THREADS", 4)     # parallel connections to InfluxDB, 
 INGEST_WORKERS = env("INGEST_WORKERS", min(8, os.cpu_count() or 4))
 WORKER_QUEUE_PACKETS = env("WORKER_QUEUE_PACKETS", 5000)   # ~10 s of one node per worker
 STATS_SECONDS = env("STATS_SECONDS", 10)
+# On SIGTERM, how long workers may take to drain their queues and write everything they hold;
+# Docker kills the container 10 s after SIGTERM
+SHUTDOWN_SECONDS = env("SHUTDOWN_SECONDS", 8.0)
 
 
 def duration_seconds(text):
@@ -241,21 +246,41 @@ class Writer(threading.Thread):
                     # Blocks while every writer is busy; meanwhile put() keeps filling pending
                     self.jobs.put((bucket, lines[i:end], times))
 
+    def flush(self, timeout):
+        """Writes everything pending now and waits until it's stored, or until timeout (s).
+        Returns whether everything was written."""
+        deadline = time.monotonic() + timeout
+        with self.cond:
+            self.cond.notify()
+        while time.monotonic() < deadline:
+            with self.cond:
+                idle = not any(self.pending.values())
+            if idle and self.jobs.unfinished_tasks == 0:
+                return True
+            time.sleep(0.05)
+        return False
+
     def _post_jobs(self):
         while True:
             bucket, lines, times = self.jobs.get()
-            if self.write(bucket, lines):
-                stored = time.time_ns()
-                latency.add("stored", [stored - t for t in times])
-                continue
-            # Put it back ahead of newer data, then back off before taking more work
-            with self.cond:
-                self.pending[bucket][:0] = lines
-                n = len(lines)
-                self.marks[bucket] = [(n, t) for t in times] + \
-                    [(end + n, t) for end, t in self.marks[bucket]]
-                self._shed()
-            time.sleep(1)
+            try:
+                self._post_job(bucket, lines, times)
+            finally:
+                self.jobs.task_done()
+
+    def _post_job(self, bucket, lines, times):
+        if self.write(bucket, lines):
+            stored = time.time_ns()
+            latency.add("stored", [stored - t for t in times])
+            return
+        # Put it back ahead of newer data, then back off before taking more work
+        with self.cond:
+            self.pending[bucket][:0] = lines
+            n = len(lines)
+            self.marks[bucket] = [(n, t) for t in times] + \
+                [(end + n, t) for end, t in self.marks[bucket]]
+            self._shed()
+        time.sleep(1)
 
     def write(self, bucket, lines):
         q = urllib.parse.urlencode({"org": INFLUX_ORG, "bucket": bucket, "precision": "ns"})
@@ -395,7 +420,12 @@ def report_stats(writer, tag, snapshot):
 
 
 def worker_main(index, inbox):
-    """One decode/write process: handles every packet for the nodes that map to it."""
+    """One decode/write process: handles every packet for the nodes that map to it. Stops at a
+    None in its inbox, after writing everything it holds."""
+    # The receiver coordinates shutdown; a Ctrl-C reaching the whole process group mustn't kill
+    # workers mid-write
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
+    signal.signal(signal.SIGTERM, signal.SIG_IGN)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     writer = Writer()
     writer.start()
@@ -412,15 +442,28 @@ def worker_main(index, inbox):
                      name="stats").start()
     nodes = {}
     while True:
-        topic, payload, received_ns = inbox.get()
+        item = inbox.get()
+        if item is None:
+            break
+        topic, payload, received_ns = item
         try:
             process(nodes, writer, topic, payload, received_ns)
         except Exception:
             log.exception("failed to process packet from %s", topic)
+    for node in nodes.values():
+        writer.put(AGG_BUCKET, node.aggregator.flush())
+    if writer.flush(SHUTDOWN_SECONDS - 1):
+        log.info("worker %d stopped, everything written", index)
+    else:
+        log.warning("worker %d stopped with data unwritten", index)
 
 
 def main():
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    # Until MQTT is running there's nothing buffered, so a stop can exit straight away. As PID 1
+    # the process would otherwise ignore SIGTERM and Docker would wait 10 s to SIGKILL it.
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        signal.signal(sig, lambda signum, _frame: sys.exit(0))
     if not INFLUX_TOKEN:
         raise SystemExit("INFLUXDB_TOKEN is not set")
     wait_for_influx()
@@ -474,8 +517,29 @@ def main():
     client.on_connect = on_connect
     client.on_message = on_message
     client.reconnect_delay_set(1, 30)
+
+    def stop(signum, _frame):
+        log.info("%s: stopping", signal.Signals(signum).name)
+        client.disconnect()   # ends loop_forever
+
+    signal.signal(signal.SIGTERM, stop)
+    signal.signal(signal.SIGINT, stop)
     client.connect_async(MQTT_HOST, MQTT_PORT, keepalive=60)
     client.loop_forever(retry_first_connection=True)
+
+    # Each worker finishes its queue, then writes what it holds
+    deadline = time.monotonic() + SHUTDOWN_SECONDS
+    for inbox in inboxes:
+        try:
+            inbox.put(None, timeout=max(0.1, deadline - time.monotonic()))
+        except queue.Full:
+            log.warning("a worker queue stayed full; its queued packets are lost")
+    for p in procs:
+        p.join(max(0.1, deadline - time.monotonic()))
+    left = [p.name for p in procs if p.is_alive()]
+    if left:
+        log.warning("workers still writing at the deadline: %s", ", ".join(left))
+    log.info("stopped")
 
 
 if __name__ == "__main__":

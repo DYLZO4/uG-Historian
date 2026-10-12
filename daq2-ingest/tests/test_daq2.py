@@ -301,6 +301,49 @@ def test_latency_summary_percentiles():
     assert s["latency_stored_p50_ms"] == 50.5
     assert 99 <= s["latency_stored_p99_ms"] <= 100
 
+
+def test_aggregator_flush_emits_the_partial_second_once():
+    agg = daq2.SecondAggregator("node_01")
+    t = T0 + 100_000_000                      # 0.1 s into a second
+    assert agg.add(daq2.decode(packets.build(packets.sine_block(0, 64), t)), TAI) == []
+    lines = agg.flush()
+    v = [l for l in lines if l.startswith("voltage,")][0]
+    assert "frames=64i" in v and v.endswith(f" {T0 - TAI}")
+    assert agg.flush() == []
+
+
+def test_writer_flush_waits_until_everything_is_stored(monkeypatch):
+    ingest = pytest.importorskip("ingest")
+    monkeypatch.setattr(ingest, "BATCH_LINES", 100)
+    monkeypatch.setattr(ingest, "FLUSH_SECONDS", 30)     # only flush() cuts batches here
+    written = []
+
+    def fake_write(self, bucket, lines):
+        time.sleep(0.05)
+        written.extend(lines)
+        return True
+
+    monkeypatch.setattr(ingest.Writer, "write", fake_write)
+    w = ingest.Writer()
+    w.start()
+    w.put(ingest.RAW_BUCKET, [f"line {i}" for i in range(450)])
+    assert w.flush(5)
+    assert len(written) == 450
+
+
+def test_writer_flush_gives_up_when_influxdb_is_down(monkeypatch):
+    ingest = pytest.importorskip("ingest")
+    real_sleep = time.sleep
+    monkeypatch.setattr(ingest, "FLUSH_SECONDS", 0.05)
+    monkeypatch.setattr(ingest.time, "sleep", lambda s: real_sleep(min(s, 0.05)))
+    monkeypatch.setattr(ingest.Writer, "write", lambda self, bucket, lines: False)
+    w = ingest.Writer()
+    w.start()
+    w.put(ingest.RAW_BUCKET, ["line"])
+    start = time.monotonic()
+    assert not w.flush(0.5)
+    assert time.monotonic() - start < 2
+
 def test_router_balances_nodes_and_keeps_them_in_place():
     ingest = pytest.importorskip("ingest")
     r = ingest.Router(4)

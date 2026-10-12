@@ -257,6 +257,12 @@ class SecondAggregator:
                 self.vi_n += len(rows)
         return out
 
+    def flush(self):
+        """Lines for the second in progress, at shutdown. Its frames field shows it's partial."""
+        out = self._emit() if self.current is not None and self.acc else []
+        self.current, self.acc = None, {}
+        return out
+
     def _power_line(self, t):
         """Per-phase and total P, S and PF for the second, or None without both V and I."""
         rms = {}
