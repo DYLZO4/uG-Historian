@@ -16,6 +16,8 @@ MAX_CHANNELS = 8
 FLAG_PTP_LOCKED = 1
 FLAG_TIME_VALID = 2
 FLAG_APERTURE_CALIBRATED = 4
+FLAG_PTP_TIMESCALE = 8
+FLAG_UTC_OFFSET = 16          # flags bits 16..31 hold the grandmaster's TAI - UTC (int16 s)
 
 # daq_signal_t, the meaning of each value_ids entry
 VA, VB, VC, IA, IB, IC, VN, IN = range(8)
@@ -61,6 +63,13 @@ class Packet:
     @property
     def time_valid(self):
         return bool(self.flags & FLAG_TIME_VALID)
+
+    def utc_offset_ns(self, default_ns):
+        """TAI - UTC announced by the grandmaster, or default_ns if the node hasn't received one."""
+        if not self.flags & FLAG_UTC_OFFSET:
+            return default_ns
+        offset_s = (self.flags >> 16) & 0xFFFF
+        return (offset_s - 0x10000 if offset_s & 0x8000 else offset_s) * 1_000_000_000
 
     def frame_times(self, tai_utc_offset_ns):
         """UTC ns of column 0 for each frame, as int64."""

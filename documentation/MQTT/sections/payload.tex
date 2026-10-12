@@ -33,7 +33,7 @@ Sample $k$ was taken at $t_s + k \cdot \Delta t$, where $t_s$ is \texttt{ts} and
 
 Implementation notes:
 \begin{itemize}[noitemsep]
-  \item The PTP clock runs on TAI. \texttt{ts} is converted to UTC by subtracting a fixed 37~s offset, as the firmware does not yet parse the UTC offset from the grandmaster's Announce messages.
+  \item The PTP clock runs on TAI. \texttt{ts} is converted to UTC by subtracting the TAI$-$UTC offset (\texttt{currentUtcOffset}) from the grandmaster's Announce messages, or 37~s until one has arrived. No offset is subtracted if the grandmaster announces an arbitrary (ARB) timescale.
   \item \texttt{ts} is the centre of the first sample's accumulated ADC burst, derived from the hardware timer and PTP clock rather than from interrupt timing.
   \item Currents are sampled one ADC slot after the voltages, so each current message's \texttt{ts} is offset from the voltage messages by that interval.
   \item \texttt{sync} is sent as an integer rather than a JSON boolean, because the historian bridge's JSON parser drops booleans.
@@ -56,7 +56,9 @@ On every PTP Sync, about once per second, each node publishes the result of its 
     "freq_ppb": 18010,
     "state": 2,
     "locked": 0,
-    "stepped": 0
+    "stepped": 0,
+    "utc_offset_s": 37,
+    "utc_announced": 1
   }
 \end{lstlisting}
 
@@ -67,13 +69,15 @@ On every PTP Sync, about once per second, each node publishes the result of its 
     \hline
     \textbf{Field} & \textbf{Type} & \textbf{Description} \\
     \hline
-    \texttt{ts} & integer & The grandmaster's time for that Sync, as Unix (UTC) nanoseconds, using the same fixed 37~s TAI offset as the bursts \\
+    \texttt{ts} & integer & The grandmaster's time for that Sync, as Unix (UTC) nanoseconds, using the same TAI offset as the bursts \\
     \texttt{offset\_ns} & integer & Measured clock offset from the grandmaster \\
     \texttt{path\_delay\_ns} & integer & Mean path delay used in the offset calculation \\
     \texttt{freq\_ppb} & integer & Frequency correction applied by the servo, relative to the nominal clock rate \\
     \texttt{state} & integer & Servo state: 0 no Sync yet, 1 estimating frequency, 2 PI loop running \\
     \texttt{locked} & integer & 1 once eight consecutive offsets are within 1~\textmu s \\
     \texttt{stepped} & integer & 1 if this update stepped the clock (offset above 1~ms) \\
+    \texttt{utc\_offset\_s} & integer & TAI$-$UTC offset subtracted from \texttt{ts} and the bursts' timestamps \\
+    \texttt{utc\_announced} & integer & 1 if that offset came from the grandmaster's Announce, 0 if it is the 37~s default \\
     \hline
   \end{tabular}
 \end{table}
@@ -82,4 +86,4 @@ The values are 64-bit integers formatted by the firmware itself, since its \text
 
 \subsection{Full-Rate Binary Payload}
 \label{sec:daq2}
-When built with \texttt{MQTT\_PUBLISH\_DAQ2} (off by default), each node additionally publishes every acquisition packet on \texttt{daq2/<node\_id>/samples}. The payload is a 128-byte little-endian header followed by \textit{frames} $\times$ \textit{channels} \texttt{float32} values in row order. The header carries a sequence number and frame index (so gaps reveal dropped data), the timestamp of the first frame and the frame period, per-channel sampling offsets, the PTP epoch (which changes on every clock step), a timing uncertainty estimate, and flags indicating PTP lock and timestamp validity. The full layout is defined by \texttt{daq\_packet\_t} in the firmware's \texttt{app/daq/daq\_task.h}. Publishing is best-effort: a packet that cannot be queued is dropped, as sampling never waits on the network. The stream is ingested by the \texttt{daq2-ingest} service, described in the InfluxDB design document.
+When built with \texttt{MQTT\_PUBLISH\_DAQ2} (off by default), each node additionally publishes every acquisition packet on \texttt{daq2/<node\_id>/samples}. The payload is a 128-byte little-endian header followed by \textit{frames} $\times$ \textit{channels} \texttt{float32} values in row order. The header carries a sequence number and frame index (so gaps reveal dropped data), the timestamp of the first frame and the frame period, per-channel sampling offsets, the PTP epoch (which changes on every clock step), a timing uncertainty estimate, and flags indicating PTP lock and timestamp validity. The flags also carry the grandmaster's timescale and, in their upper 16 bits, the TAI$-$UTC offset the node received in its Announce messages. The full layout is defined by \texttt{daq\_packet\_t} in the firmware's \texttt{app/daq/daq\_task.h}. Publishing is best-effort: a packet that cannot be queued is dropped, as sampling never waits on the network. The stream is ingested by the \texttt{daq2-ingest} service, described in the InfluxDB design document.

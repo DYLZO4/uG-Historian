@@ -10,7 +10,7 @@ The following questions were open when this design was first written, and have b
 \hline
 1 & ADC sample rate per channel & Approximately 30~kHz acquisition (30\,048 frames/s). Every sample is stored through the full-rate path; the JSON path also publishes one 50~Hz cycle per channel every 5~s, decimated to approximately 1~kHz (20 samples). \\
 2 & Single-sample vs burst payload & Burst for JSON. Each burst is stored as one point with fields \texttt{v\_0} to \texttt{v\_19}, and split into one point per sample in \texttt{samples}. The full-rate path uses 64-frame binary packets. \\
-3 & TAI vs UTC in STM32 PTP stack & PTP runs on TAI; the firmware publishes UTC using a fixed 37~s offset. The historian server's clock must be on UTC. \\
+3 & TAI vs UTC in STM32 PTP stack & PTP runs on TAI; the firmware publishes UTC using the TAI$-$UTC offset from the grandmaster's Announce messages (37~s until one arrives). The historian server's clock must be on UTC. \\
 4 & Grafana on same host or separate & Same host. InfluxDB stays bound to loopback; Grafana is published on port 3000. \\
 5 & \texttt{sync\_state} as string or integer field & Replaced by an integer \texttt{sync} field (0/1) in each burst, as Telegraf's JSON parser drops strings and booleans. \\
 6 & \texttt{min}/\texttt{max} downsampling required & Yes: \texttt{waveform\_1s} holds per-second RMS, mean, minimum, and maximum, computed by \texttt{daq2-ingest} (Section~\ref{sec:downsampling}). \\

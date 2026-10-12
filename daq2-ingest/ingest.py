@@ -284,7 +284,8 @@ def process(nodes, writer, topic, payload):
         stats.add(gap_frames=packet.first_output_index - node.next_index)
     node.next_index = packet.first_output_index + packet.frames
 
-    if abs(packet.first_time_ns - TAI_UTC_OFFSET_NS - time.time_ns()) > MAX_CLOCK_SKEW_NS:
+    utc_offset_ns = packet.utc_offset_ns(TAI_UTC_OFFSET_NS)
+    if abs(packet.first_time_ns - utc_offset_ns - time.time_ns()) > MAX_CLOCK_SKEW_NS:
         # Not synchronised yet (or a wildly wrong clock): it would land years away from now
         stats.add(implausible_time=1)
         return
@@ -297,9 +298,9 @@ def process(nodes, writer, topic, payload):
         stats.add(time_flagged=1)
     node.last_written = (packet.first_output_index, packet.first_time_ns, packet.period_q32_ns,
                          packet.config_epoch)
-    writer.put(RAW_BUCKET, daq2.raw_lines(packet, node_id, TAI_UTC_OFFSET_NS, integer=RAW_INTEGER) +
-               [daq2.packet_line(packet, node_id, TAI_UTC_OFFSET_NS)])
-    done = node.aggregator.add(packet, TAI_UTC_OFFSET_NS)
+    writer.put(RAW_BUCKET, daq2.raw_lines(packet, node_id, utc_offset_ns, integer=RAW_INTEGER) +
+               [daq2.packet_line(packet, node_id, utc_offset_ns)])
+    done = node.aggregator.add(packet, utc_offset_ns)
     if done:
         writer.put(AGG_BUCKET, done)
 

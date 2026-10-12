@@ -217,18 +217,20 @@ Only trust cross-node comparisons where `sync` is `1` on both nodes.
 **PTP status.** On every Sync (about once a second), each node also publishes its servo's state on `microgrid/<node_id>/ptp_status/servo`:
 
 ```json
-{"ts": 1791696297692880523, "offset_ns": 18274, "path_delay_ns": 15497, "freq_ppb": 18010, "state": 2, "locked": 0, "stepped": 0}
+{"ts": 1791696297692880523, "offset_ns": 18274, "path_delay_ns": 15497, "freq_ppb": 18010, "state": 2, "locked": 0, "stepped": 0, "utc_offset_s": 37, "utc_announced": 1}
 ```
 
 | Field | Meaning |
 |-------|---------|
-| `ts` | The grandmaster's time for that Sync, as Unix UTC ns (same 37 s TAI handling as the bursts) |
+| `ts` | The grandmaster's time for that Sync, as Unix UTC ns (same TAI offset as the bursts) |
 | `offset_ns` | Measured clock offset from the grandmaster |
 | `path_delay_ns` | Mean path delay used for it |
 | `freq_ppb` | Frequency correction the servo is applying, in parts per billion (the oscillator error it's cancelling) |
 | `state` | `0` no Sync yet, `1` estimating frequency, `2` PI loop running |
 | `locked` | `1` once 8 offsets in a row are within 1 µs |
 | `stepped` | `1` if this update stepped the clock (offset over 1 ms) |
+| `utc_offset_s` | TAI − UTC subtracted from the node's timestamps |
+| `utc_announced` | `1` if that offset came from the grandmaster's Announce, `0` if it's the 37 s default |
 
 Telegraf stores these as one `mqtt_consumer` point per Sync with `subsystem = ptp_status`, `metric = servo`, and those fields.
 
@@ -241,7 +243,7 @@ The firmware can also publish every frame at the full ~30 kHz as a binary packet
 3. The firmware publishes the burst payload from [section 8](#8-data-model-whats-actually-in-influxdb) at QoS 0, client ID `mqttc-<node_id>`. Anything else publishing into `microgrid/#` must follow the same rules:
    - `ts` **must** be Unix time in nanoseconds. Wrong units put points in 1970 or the far future, where they won't show up in Grafana.
    - Numbers and arrays of numbers only. Telegraf's JSON parser drops booleans and strings.
-   - The PTP clock runs on TAI. The firmware converts to UTC with a fixed 37 s offset, so the historian server's clock should be on UTC (e.g. NTP) for Grafana's time ranges to line up.
+   - The PTP clock runs on TAI. The firmware converts to UTC with the TAI − UTC offset the grandmaster announces (37 s until it has), so the historian server's clock should be on UTC (e.g. NTP) for Grafana's time ranges to line up.
 
 ## 10. Full-rate waveform data (daq2-ingest)
 
@@ -317,7 +319,7 @@ These have defaults in `daq2-ingest/ingest.py` and can be overridden in the serv
 |----------|---------|---------|
 | `RAW_FORMAT` | `int` | `int` (mV/mA integers) or `float` (V/A) for raw values |
 | `AGG_RETENTION` | `0` | Retention of `waveform_1s`; `0` keeps it forever |
-| `TAI_UTC_OFFSET_S` | `37` | Subtracted from the nodes' TAI timestamps, matching the firmware's JSON path |
+| `TAI_UTC_OFFSET_S` | `37` | Subtracted from the nodes' TAI timestamps when a packet doesn't carry the grandmaster's announced offset (before the node's first Announce) |
 | `TIME_CONTINUITY_NS` | `10000` | How far a not-time-valid packet's time may be from the predicted time and still be kept |
 | `MAX_CLOCK_SKEW_S` | `86400` | Packets further than this from the server's clock are skipped (`implausible_time`), e.g. a node publishing before its first PTP step, when its clock still reads 1970 |
 | `INGEST_WORKERS` | CPU cores, max 8 | Decode/write processes. Each node is assigned to the least-loaded one and stays there. One full-rate node per worker has headroom; two is at the limit. |

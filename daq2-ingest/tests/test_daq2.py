@@ -32,6 +32,20 @@ def test_frame_times_follow_firmware_formula():
     assert abs((t[1] - t[0]) - 1e9 / 30048) < 1
 
 
+
+def test_utc_offset_comes_from_the_announce_when_present():
+    block = packets.sine_block(0, 64)
+    base = daq2.FLAG_PTP_LOCKED | daq2.FLAG_TIME_VALID
+    assert daq2.decode(packets.build(block, T0, flags=base)).utc_offset_ns(TAI) == TAI
+    announced = base | daq2.FLAG_PTP_TIMESCALE | daq2.FLAG_UTC_OFFSET | (38 << 16)
+    assert daq2.decode(packets.build(block, T0, flags=announced)).utc_offset_ns(TAI) == 38_000_000_000
+    # ARB timescale: the firmware reports a zero offset
+    arb = base | daq2.FLAG_UTC_OFFSET
+    assert daq2.decode(packets.build(block, T0, flags=arb)).utc_offset_ns(TAI) == 0
+    # int16, so a negative offset survives
+    negative = base | daq2.FLAG_PTP_TIMESCALE | daq2.FLAG_UTC_OFFSET | (0xFFFF << 16)
+    assert daq2.decode(packets.build(block, T0, flags=negative)).utc_offset_ns(TAI) == -1_000_000_000
+
 def test_raw_lines_put_each_group_at_its_own_time():
     p = daq2.decode(packets.build(packets.sine_block(0, 64), T0))
     lines = daq2.raw_lines(p, "node_01", TAI)

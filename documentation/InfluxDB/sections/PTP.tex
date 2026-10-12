@@ -5,7 +5,7 @@ The STM32 nodes are the authoritative timestamp source. Each node disciplines it
 Telegraf's \texttt{json\_time\_key} and \texttt{json\_time\_format = "unix\_ns"} configuration ensures this timestamp is used as the InfluxDB timestamp verbatim.
 
 \subsection{Timescale}
-PTP time is TAI. The firmware converts it to UTC by subtracting a fixed 37~s offset before publishing, as it does not yet parse the UTC offset advertised in the grandmaster's Announce messages. A future leap second would therefore require a firmware update. Before the servo first locks, the node's clock counts from boot; such early bursts carry \texttt{sync} = 0.
+PTP time is TAI. The firmware converts it to UTC before publishing by subtracting the TAI$-$UTC offset (\texttt{currentUtcOffset}) advertised in the grandmaster's Announce messages, so a leap second needs no firmware change. Until the first Announce from the node's master arrives, or if the grandmaster marks the offset as not valid, it uses 37~s, the offset since 2017. If the grandmaster announces an arbitrary (ARB) timescale rather than TAI, no offset is subtracted. Before the servo first locks, the node's clock counts from boot; such early bursts carry \texttt{sync} = 0.
 
 \subsection{Clock Domain Consistency}
 All nodes share a single PTP clock domain. The historian server's system clock must be on UTC, synchronised to the same grandmaster or to a sufficiently accurate NTP source, so that Flux query time ranges expressed in wall-clock time correspond correctly to stored point timestamps.

@@ -80,6 +80,8 @@ PTP status messages (\texttt{subsystem} = \texttt{ptp\_status}, \texttt{metric} 
       \texttt{state} & float & Servo state: 0 no Sync yet, 1 estimating frequency, 2 PI loop running \\
       \texttt{locked} & float & 1 once eight consecutive offsets are within 1~\textmu s \\
       \texttt{stepped} & float & 1 if this update stepped the clock \\
+      \texttt{utc\_offset\_s} & float & TAI$-$UTC offset applied to \texttt{ts} \\
+      \texttt{utc\_announced} & float & 1 if that offset came from the grandmaster's Announce, 0 if it is the 37~s default \\
       \hline
     \end{tabular}
   \end{center}
