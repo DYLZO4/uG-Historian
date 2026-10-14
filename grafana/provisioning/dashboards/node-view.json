@@ -105,12 +105,37 @@
         "includeAll": false,
         "multi": false,
         "description": "Length of the full-rate waveform panels (latest samples, ending ~2 s ago).",
-        "query": "20 ms : 20000000, 40 ms : 40000000, 100 ms : 100000000, 200 ms : 200000000, 500 ms : 500000000, 1 s : 1000000000",
+        "query": "500 µs : 500000, 1 ms : 1000000, 2 ms : 2000000, 5 ms : 5000000, 10 ms : 10000000, 20 ms : 20000000, 40 ms : 40000000, 100 ms : 100000000, 200 ms : 200000000, 500 ms : 500000000, 1 s : 1000000000",
         "current": {
           "text": "100 ms",
           "value": "100000000"
         },
         "options": [
+          {
+            "text": "500 µs",
+            "value": "500000",
+            "selected": false
+          },
+          {
+            "text": "1 ms",
+            "value": "1000000",
+            "selected": false
+          },
+          {
+            "text": "2 ms",
+            "value": "2000000",
+            "selected": false
+          },
+          {
+            "text": "5 ms",
+            "value": "5000000",
+            "selected": false
+          },
+          {
+            "text": "10 ms",
+            "value": "10000000",
+            "selected": false
+          },
           {
             "text": "20 ms",
             "value": "20000000",
