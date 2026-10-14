@@ -97,6 +97,51 @@
         ],
         "includeAll": false,
         "multi": false
+      },
+      {
+        "name": "window",
+        "label": "Full-rate window",
+        "type": "custom",
+        "includeAll": false,
+        "multi": false,
+        "description": "Length of the full-rate waveform panels (latest samples, ending ~2 s ago).",
+        "query": "20 ms : 20000000, 40 ms : 40000000, 100 ms : 100000000, 200 ms : 200000000, 500 ms : 500000000, 1 s : 1000000000",
+        "current": {
+          "text": "100 ms",
+          "value": "100000000"
+        },
+        "options": [
+          {
+            "text": "20 ms",
+            "value": "20000000",
+            "selected": false
+          },
+          {
+            "text": "40 ms",
+            "value": "40000000",
+            "selected": false
+          },
+          {
+            "text": "100 ms",
+            "value": "100000000",
+            "selected": true
+          },
+          {
+            "text": "200 ms",
+            "value": "200000000",
+            "selected": false
+          },
+          {
+            "text": "500 ms",
+            "value": "500000000",
+            "selected": false
+          },
+          {
+            "text": "1 s",
+            "value": "1000000000",
+            "selected": false
+          }
+        ]
       }
     ]
   },
@@ -877,7 +922,7 @@
     {
       "id": 13,
       "type": "row",
-      "title": "Full-rate waveform (latest ~100 ms)",
+      "title": "Full-rate waveform (latest ${window:text})",
       "collapsed": false,
       "gridPos": {
         "x": 0,
@@ -908,7 +953,7 @@
             "type": "influxdb",
             "uid": "PF6CD3C7EE64CF7D1"
           },
-          "query": "import \"regexp\"\nphases = regexp.compile(v: if \"${phase}\" == \"total\" then \"^[abc]$\" else \"^${phase}$\")\nstop = (from(bucket: \"waveform\")\n  |> range(start: -12s, stop: -2s)\n  |> filter(fn: (r) => r._measurement == \"voltage\" and r.node_id == \"${node_id}\" and r._field =~ phases)\n  |> last()\n  |> group()\n  |> min(column: \"_time\")\n  |> findRecord(fn: (key) => true, idx: 0))._time\nstart = time(v: int(v: stop) - 100000000)\nfrom(bucket: \"waveform\")\n  |> range(start: start, stop: time(v: int(v: stop) + 1))\n  |> filter(fn: (r) => r._measurement == \"voltage\" and r.node_id == \"${node_id}\" and r._field =~ phases)\n  |> map(fn: (r) => ({r with _value: float(v: r._value) / 1000.0, _field: \"phase_\" + r._field}))\n  |> group(columns: [\"node_id\"])\n  |> pivot(rowKey: [\"_time\"], columnKey: [\"_field\"], valueColumn: \"_value\")\n  |> sort(columns: [\"_time\"])\n  |> map(fn: (r) => ({r with t_ms: float(v: int(v: r._time) - int(v: start)) / 1000000.0}))\n  |> drop(columns: [\"_time\", \"_start\", \"_stop\", \"_measurement\", \"node_id\"])"
+          "query": "import \"regexp\"\nphases = regexp.compile(v: if \"${phase}\" == \"total\" then \"^[abc]$\" else \"^${phase}$\")\nstop = (from(bucket: \"waveform\")\n  |> range(start: -12s, stop: -2s)\n  |> filter(fn: (r) => r._measurement == \"voltage\" and r.node_id == \"${node_id}\" and r._field =~ phases)\n  |> last()\n  |> group()\n  |> min(column: \"_time\")\n  |> findRecord(fn: (key) => true, idx: 0))._time\nstart = time(v: int(v: stop) - ${window})\nfrom(bucket: \"waveform\")\n  |> range(start: start, stop: time(v: int(v: stop) + 1))\n  |> filter(fn: (r) => r._measurement == \"voltage\" and r.node_id == \"${node_id}\" and r._field =~ phases)\n  |> map(fn: (r) => ({r with _value: float(v: r._value) / 1000.0, _field: \"phase_\" + r._field}))\n  |> group(columns: [\"node_id\"])\n  |> pivot(rowKey: [\"_time\"], columnKey: [\"_field\"], valueColumn: \"_value\")\n  |> sort(columns: [\"_time\"])\n  |> map(fn: (r) => ({r with t_ms: float(v: int(v: r._time) - int(v: start)) / 1000000.0}))\n  |> drop(columns: [\"_time\", \"_start\", \"_stop\", \"_measurement\", \"node_id\"])"
         }
       ],
       "fieldConfig": {
@@ -1001,7 +1046,7 @@
           "sort": "none"
         }
       },
-      "description": "The node's latest ~100 ms at the full ~30 kHz (ending ~2 s ago, once every write has landed), from the waveform bucket, for the phase selected at the top. Ignores the dashboard time range."
+      "description": "The node's latest samples at the full ~30 kHz over the window chosen at the top (ending ~2 s ago, once every write has landed), from the waveform bucket, for the phase selected at the top. Ignores the dashboard time range."
     },
     {
       "id": 15,
@@ -1024,7 +1069,7 @@
             "type": "influxdb",
             "uid": "PF6CD3C7EE64CF7D1"
           },
-          "query": "import \"regexp\"\nphases = regexp.compile(v: if \"${phase}\" == \"total\" then \"^[abc]$\" else \"^${phase}$\")\nstop = (from(bucket: \"waveform\")\n  |> range(start: -12s, stop: -2s)\n  |> filter(fn: (r) => r._measurement == \"current\" and r.node_id == \"${node_id}\" and r._field =~ phases)\n  |> last()\n  |> group()\n  |> min(column: \"_time\")\n  |> findRecord(fn: (key) => true, idx: 0))._time\nstart = time(v: int(v: stop) - 100000000)\nfrom(bucket: \"waveform\")\n  |> range(start: start, stop: time(v: int(v: stop) + 1))\n  |> filter(fn: (r) => r._measurement == \"current\" and r.node_id == \"${node_id}\" and r._field =~ phases)\n  |> map(fn: (r) => ({r with _value: float(v: r._value) / 1000.0, _field: \"phase_\" + r._field}))\n  |> group(columns: [\"node_id\"])\n  |> pivot(rowKey: [\"_time\"], columnKey: [\"_field\"], valueColumn: \"_value\")\n  |> sort(columns: [\"_time\"])\n  |> map(fn: (r) => ({r with t_ms: float(v: int(v: r._time) - int(v: start)) / 1000000.0}))\n  |> drop(columns: [\"_time\", \"_start\", \"_stop\", \"_measurement\", \"node_id\"])"
+          "query": "import \"regexp\"\nphases = regexp.compile(v: if \"${phase}\" == \"total\" then \"^[abc]$\" else \"^${phase}$\")\nstop = (from(bucket: \"waveform\")\n  |> range(start: -12s, stop: -2s)\n  |> filter(fn: (r) => r._measurement == \"current\" and r.node_id == \"${node_id}\" and r._field =~ phases)\n  |> last()\n  |> group()\n  |> min(column: \"_time\")\n  |> findRecord(fn: (key) => true, idx: 0))._time\nstart = time(v: int(v: stop) - ${window})\nfrom(bucket: \"waveform\")\n  |> range(start: start, stop: time(v: int(v: stop) + 1))\n  |> filter(fn: (r) => r._measurement == \"current\" and r.node_id == \"${node_id}\" and r._field =~ phases)\n  |> map(fn: (r) => ({r with _value: float(v: r._value) / 1000.0, _field: \"phase_\" + r._field}))\n  |> group(columns: [\"node_id\"])\n  |> pivot(rowKey: [\"_time\"], columnKey: [\"_field\"], valueColumn: \"_value\")\n  |> sort(columns: [\"_time\"])\n  |> map(fn: (r) => ({r with t_ms: float(v: int(v: r._time) - int(v: start)) / 1000000.0}))\n  |> drop(columns: [\"_time\", \"_start\", \"_stop\", \"_measurement\", \"node_id\"])"
         }
       ],
       "fieldConfig": {
@@ -1117,7 +1162,7 @@
           "sort": "none"
         }
       },
-      "description": "The node's latest ~100 ms at the full ~30 kHz (ending ~2 s ago), for the phase selected at the top. Currents are sampled ~16.6 \u00b5s after voltages."
+      "description": "The node's latest samples at the full ~30 kHz over the window chosen at the top (ending ~2 s ago), for the phase selected at the top. Currents are sampled ~16.6 µs after voltages."
     },
     {
       "id": 19,
