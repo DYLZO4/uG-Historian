@@ -72,10 +72,11 @@ from(bucket: "telemetry")
 
 \subsection{Grafana Integration}
 \label{sec:grafana}
-Grafana connects to InfluxDB v2 via the native Flux data source. Both the data source and the dashboard are provisioned from the repository, so a fresh deployment needs no manual configuration:
+Grafana connects to InfluxDB v2 via the native Flux data source. Both the data source and the dashboards are provisioned from the repository, so a fresh deployment needs no manual configuration:
 \begin{itemize}[noitemsep]
   \item The data source (\path{grafana/provisioning/datasources/influxdb.yml}) reads its token from \texttt{INFLUXDB\_TOKEN}, which Docker Compose passes to the Grafana container. Its uid is pinned to the value Grafana originally generated for it, so that existing panels and the export script continue to reference it.
   \item The \textit{Node View} dashboard (\path{grafana/provisioning/dashboards/node-view.json}), which shows an operator everything about one node, is loaded into a \textit{Microgrid} folder. It may be edited in Grafana, but must be exported back to the repository for changes to persist.
+  \item The \textit{Node Compare} dashboard (\path{grafana/provisioning/dashboards/node-compare.json}), in the same folder, shows two selected nodes side by side for viewing same-signal and multi-node tests (Table~\ref{tab:nodecompare}); test results are computed offline from the stored samples.
 \end{itemize}
 
 \begin{table}[H]
@@ -94,6 +95,24 @@ Grafana connects to InfluxDB v2 via the native Flux data source. Both the data s
       PTP row & Offset, path delay and frequency correction from \texttt{ptp\_status}, one point per Sync, and the firmware's sample-timing uncertainty \\
       Full-rate waveforms & The newest 100~ms that all three phases have reached in \texttt{waveform}, among data at least 2~s old (\texttt{daq2-ingest}'s writer threads can store a newer batch before an older one), at the full sample rate, plotted against milliseconds so the axis fits the window \\
       Diagnostics (collapsed) & Completeness: frames stored over frames acquired in the minute ending 5~s ago, from the \texttt{daq2\_packet} frame indices; the newest seconds are excluded because \texttt{daq2-ingest}'s writer threads can store batches out of order. Also \texttt{daq2\_ingest} loss counters summed over all nodes, per-second frame counts, and ingest latency (median and 99th percentile from sample to MQTT arrival and to storage) \\
+      \hline
+    \end{tabular}
+  \end{center}
+\end{table}
+
+\begin{table}[H]
+  \caption{Node Compare Panels (two nodes via \texttt{node\_a} and \texttt{node\_b} variables)}
+  \label{tab:nodecompare}
+  \begin{center}
+    \begin{tabular}{p{0.28\linewidth}p{0.62\linewidth}}
+      \hline
+      \textbf{Panel} & \textbf{Source and query pattern}\\
+      \hline
+      Top-bar selectors & Node A, node B, input (voltage or current) and phase (A, B or C) \\
+      Status, PTP, completeness & As in Node View, one value per node \\
+      Overlay & Both nodes' samples over the same 60~ms at the full sample rate, plotted against milliseconds \\
+      Per-second panels & RMS and mean of the selected input from \texttt{waveform\_1s} for both nodes, and frames per second \\
+      Bottom row & PTP offset of both nodes; \texttt{daq2\_ingest} loss counters and latency across all nodes \\
       \hline
     \end{tabular}
   \end{center}

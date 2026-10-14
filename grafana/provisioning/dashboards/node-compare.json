@@ -1,0 +1,755 @@
+{
+  "uid": "node-compare",
+  "title": "Node Compare",
+  "tags": [
+    "microgrid"
+  ],
+  "timezone": "browser",
+  "description": "Two nodes side by side, for the same-signal test (T3) and the two-node run (S1).",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "refresh": "5s",
+  "timepicker": {
+    "refresh_intervals": [
+      "1s",
+      "5s",
+      "10s",
+      "30s",
+      "1m",
+      "5m"
+    ]
+  },
+  "time": {
+    "from": "now-15m",
+    "to": "now"
+  },
+  "templating": {
+    "list": [
+      {
+        "name": "node_a",
+        "label": "Node A",
+        "type": "query",
+        "datasource": {
+          "type": "influxdb",
+          "uid": "PF6CD3C7EE64CF7D1"
+        },
+        "query": "import \"influxdata/influxdb/schema\"\nunion(tables: [\n  schema.tagValues(bucket: \"waveform_1s\", tag: \"node_id\", start: -1d,\n    predicate: (r) => r._measurement == \"voltage\" and r._field == \"frames\"),\n  schema.tagValues(bucket: \"telemetry\", tag: \"node_id\", start: -1d,\n    predicate: (r) => r._measurement == \"mqtt_consumer\" and r._field == \"dt_ns\")\n])\n  |> group()\n  |> unique()\n  |> sort()",
+        "refresh": 2,
+        "sort": 1,
+        "includeAll": false,
+        "multi": false,
+        "current": {
+          "text": "node_01",
+          "value": "node_01"
+        }
+      },
+      {
+        "name": "node_b",
+        "label": "Node B",
+        "type": "query",
+        "datasource": {
+          "type": "influxdb",
+          "uid": "PF6CD3C7EE64CF7D1"
+        },
+        "query": "import \"influxdata/influxdb/schema\"\nunion(tables: [\n  schema.tagValues(bucket: \"waveform_1s\", tag: \"node_id\", start: -1d,\n    predicate: (r) => r._measurement == \"voltage\" and r._field == \"frames\"),\n  schema.tagValues(bucket: \"telemetry\", tag: \"node_id\", start: -1d,\n    predicate: (r) => r._measurement == \"mqtt_consumer\" and r._field == \"dt_ns\")\n])\n  |> group()\n  |> unique()\n  |> sort()",
+        "refresh": 2,
+        "sort": 1,
+        "includeAll": false,
+        "multi": false,
+        "current": {
+          "text": "node_02",
+          "value": "node_02"
+        }
+      },
+      {
+        "name": "quantity",
+        "label": "Input",
+        "type": "custom",
+        "includeAll": false,
+        "multi": false,
+        "query": "Voltage : voltage, Current : current",
+        "current": {
+          "text": "Voltage",
+          "value": "voltage"
+        },
+        "options": [
+          {
+            "text": "Voltage",
+            "value": "voltage",
+            "selected": true
+          },
+          {
+            "text": "Current",
+            "value": "current",
+            "selected": false
+          }
+        ]
+      },
+      {
+        "name": "phase",
+        "label": "Phase",
+        "type": "custom",
+        "includeAll": false,
+        "multi": false,
+        "query": "A : a, B : b, C : c",
+        "current": {
+          "text": "A",
+          "value": "a"
+        },
+        "options": [
+          {
+            "text": "A",
+            "value": "a",
+            "selected": true
+          },
+          {
+            "text": "B",
+            "value": "b",
+            "selected": false
+          },
+          {
+            "text": "C",
+            "value": "c",
+            "selected": false
+          }
+        ]
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Status",
+      "datasource": {
+        "type": "influxdb",
+        "uid": "PF6CD3C7EE64CF7D1"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 8,
+        "h": 4
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "influxdb",
+            "uid": "PF6CD3C7EE64CF7D1"
+          },
+          "query": "from(bucket: \"waveform\")\n  |> range(start: -1h)\n  |> filter(fn: (r) => r._measurement == \"daq2_packet\" and (r.node_id == \"${node_a}\" or r.node_id == \"${node_b}\") and r._field == \"sequence\")\n  |> last()\n  |> map(fn: (r) => ({r with _value: float(v: uint(v: now()) - uint(v: r._time)) / 1000000000.0}))\n  |> keep(columns: [\"_time\", \"_value\", \"node_id\"])\n  |> group(columns: [\"node_id\"])"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              }
+            ]
+          },
+          "mappings": [
+            {
+              "type": "range",
+              "options": {
+                "from": 0,
+                "to": 30,
+                "result": {
+                  "text": "online",
+                  "color": "green"
+                }
+              }
+            },
+            {
+              "type": "range",
+              "options": {
+                "from": 30,
+                "to": 1000000000000000.0,
+                "result": {
+                  "text": "offline",
+                  "color": "red"
+                }
+              }
+            }
+          ],
+          "noValue": "offline",
+          "displayName": "${__field.labels.node_id}"
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "value_and_name",
+        "justifyMode": "center",
+        "orientation": "auto"
+      },
+      "description": "Online if the node's newest full-rate packet is under 30 s old."
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "PTP",
+      "datasource": {
+        "type": "influxdb",
+        "uid": "PF6CD3C7EE64CF7D1"
+      },
+      "gridPos": {
+        "x": 8,
+        "y": 0,
+        "w": 8,
+        "h": 4
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "influxdb",
+            "uid": "PF6CD3C7EE64CF7D1"
+          },
+          "query": "import \"math\"\nfrom(bucket: \"telemetry\")\n  |> range(start: -1m)\n  |> filter(fn: (r) => r._measurement == \"mqtt_consumer\" and (r.node_id == \"${node_a}\" or r.node_id == \"${node_b}\") and r.subsystem == \"ptp_status\")\n  |> filter(fn: (r) => r._field == \"locked\" or r._field == \"state\" or r._field == \"offset_ns\")\n  |> last()\n  |> keep(columns: [\"_time\", \"_value\", \"_field\", \"node_id\"])\n  |> group(columns: [\"node_id\"])\n  |> pivot(rowKey: [\"_time\"], columnKey: [\"_field\"], valueColumn: \"_value\")\n  |> map(fn: (r) => ({_time: r._time, node_id: r.node_id, _value:\n      if r.locked == 1.0 then 2.0\n      else if r.state == 2.0 and math.abs(x: r.offset_ns) < 100000.0 then 1.0\n      else 0.0}))"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "2": {
+                  "text": "locked",
+                  "color": "green"
+                },
+                "1": {
+                  "text": "tracking",
+                  "color": "yellow"
+                },
+                "0": {
+                  "text": "unlocked",
+                  "color": "red"
+                }
+              }
+            }
+          ],
+          "noValue": "no data",
+          "displayName": "${__field.labels.node_id}"
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "value_and_name",
+        "justifyMode": "center",
+        "orientation": "auto"
+      },
+      "description": "Locked: servo within 1 us of the grandmaster for 8 Syncs. Both nodes must be locked to compare them."
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Completeness",
+      "datasource": {
+        "type": "influxdb",
+        "uid": "PF6CD3C7EE64CF7D1"
+      },
+      "gridPos": {
+        "x": 16,
+        "y": 0,
+        "w": 8,
+        "h": 4
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "influxdb",
+            "uid": "PF6CD3C7EE64CF7D1"
+          },
+          "query": "import \"array\"\npct = (node) => {\n  pk = from(bucket: \"waveform\")\n    |> range(start: -65s, stop: -5s)\n    |> filter(fn: (r) => r._measurement == \"daq2_packet\" and r.node_id == node)\n  received = (pk |> filter(fn: (r) => r._field == \"frames\") |> sum() |> findRecord(fn: (key) => true, idx: 0))._value\n  lo = (pk |> filter(fn: (r) => r._field == \"first_index\") |> min() |> findRecord(fn: (key) => true, idx: 0))._value\n  hi = (pk |> filter(fn: (r) => r._field == \"first_index\") |> max() |> findRecord(fn: (key) => true, idx: 0))._value\n    + (pk |> filter(fn: (r) => r._field == \"frames\") |> last() |> findRecord(fn: (key) => true, idx: 0))._value\n  return array.from(rows: [{node_id: node, _value: 100.0 * float(v: received) / float(v: hi - lo)}])\n}\nunion(tables: [pct(node: \"${node_a}\"), pct(node: \"${node_b}\")])\n  |> group(columns: [\"node_id\"])"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 99
+              },
+              {
+                "color": "green",
+                "value": 99.9
+              }
+            ]
+          },
+          "mappings": [],
+          "unit": "percent",
+          "noValue": "DAQ2 off",
+          "decimals": 2,
+          "displayName": "${__field.labels.node_id}"
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "value_and_name",
+        "justifyMode": "center",
+        "orientation": "auto"
+      },
+      "description": "Frames stored as a share of frames acquired, over the minute to 5 s ago, from the packet frame indices."
+    },
+    {
+      "id": 4,
+      "type": "trend",
+      "title": "Overlay: ${quantity:text}, phase ${phase:text} (latest 60 ms)",
+      "datasource": {
+        "type": "influxdb",
+        "uid": "PF6CD3C7EE64CF7D1"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 4,
+        "w": 24,
+        "h": 9
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "influxdb",
+            "uid": "PF6CD3C7EE64CF7D1"
+          },
+          "query": "lastTime = (node) => (from(bucket: \"waveform\")\n  |> range(start: -12s, stop: -2s)\n  |> filter(fn: (r) => r._measurement == \"${quantity}\" and r.node_id == node and r._field == \"${phase}\")\n  |> last()\n  |> findRecord(fn: (key) => true, idx: 0))._time\nta = int(v: lastTime(node: \"${node_a}\"))\ntb = int(v: lastTime(node: \"${node_b}\"))\nstop = time(v: if ta < tb then ta else tb)\nstart = time(v: int(v: stop) - 60000000)\nfrom(bucket: \"waveform\")\n  |> range(start: start, stop: time(v: int(v: stop) + 1))\n  |> filter(fn: (r) => r._measurement == \"${quantity}\" and (r.node_id == \"${node_a}\" or r.node_id == \"${node_b}\") and r._field == \"${phase}\")\n  |> map(fn: (r) => ({_time: r._time, _value: float(v: r._value) / 1000.0, node_id: r.node_id}))\n  |> group()\n  |> pivot(rowKey: [\"_time\"], columnKey: [\"node_id\"], valueColumn: \"_value\")\n  |> sort(columns: [\"_time\"])\n  |> map(fn: (r) => ({r with t_ms: float(v: int(v: r._time) - int(v: start)) / 1000000.0}))\n  |> drop(columns: [\"_time\"])"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "showPoints": "never",
+            "fillOpacity": 0,
+            "axisLabel": "",
+            "spanNulls": true
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "unit": "none"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "t_ms"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "ms"
+              },
+              {
+                "id": "displayName",
+                "value": "time"
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "xField": "t_ms",
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "description": "Both nodes' samples over the same 60 ms at the full ~30 kHz, ending ~2 s ago. With the same signal on both inputs the traces should lie on top of each other."
+    },
+    {
+      "type": "timeseries",
+      "id": 5,
+      "title": "RMS per second: ${quantity:text}, phase ${phase:text}",
+      "datasource": {
+        "type": "influxdb",
+        "uid": "PF6CD3C7EE64CF7D1"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 13,
+        "w": 12,
+        "h": 8
+      },
+      "description": "Per-second RMS from waveform_1s (V or A). A steady gap between the nodes is a gain difference, which does not affect T3.",
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "influxdb",
+            "uid": "PF6CD3C7EE64CF7D1"
+          },
+          "query": "from(bucket: \"waveform_1s\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"${quantity}\" and (r.node_id == \"${node_a}\" or r.node_id == \"${node_b}\") and r._field == \"${phase}_rms\")\n  |> aggregateWindow(every: v.windowPeriod, fn: mean, createEmpty: true)\n  |> map(fn: (r) => ({_time: r._time, _value: r._value, _field: r.node_id}))\n  |> group(columns: [\"_field\"])"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "showPoints": "never",
+            "spanNulls": false,
+            "fillOpacity": 0
+          },
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "id": 6,
+      "title": "DC mean per second: ${quantity:text}, phase ${phase:text}",
+      "datasource": {
+        "type": "influxdb",
+        "uid": "PF6CD3C7EE64CF7D1"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 13,
+        "w": 6,
+        "h": 8
+      },
+      "description": "Per-second mean (V or A): each board's offset. The T3 panel removes it.",
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "influxdb",
+            "uid": "PF6CD3C7EE64CF7D1"
+          },
+          "query": "from(bucket: \"waveform_1s\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"${quantity}\" and (r.node_id == \"${node_a}\" or r.node_id == \"${node_b}\") and r._field == \"${phase}_mean\")\n  |> aggregateWindow(every: v.windowPeriod, fn: mean, createEmpty: true)\n  |> map(fn: (r) => ({_time: r._time, _value: r._value, _field: r.node_id}))\n  |> group(columns: [\"_field\"])"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "showPoints": "never",
+            "spanNulls": false,
+            "fillOpacity": 0
+          },
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "id": 7,
+      "title": "Full-rate frames per second",
+      "datasource": {
+        "type": "influxdb",
+        "uid": "PF6CD3C7EE64CF7D1"
+      },
+      "gridPos": {
+        "x": 18,
+        "y": 13,
+        "w": 6,
+        "h": 8
+      },
+      "description": "Lowest per-second frame count in each interval; ~30048 is complete.",
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "influxdb",
+            "uid": "PF6CD3C7EE64CF7D1"
+          },
+          "query": "from(bucket: \"waveform_1s\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"voltage\" and (r.node_id == \"${node_a}\" or r.node_id == \"${node_b}\") and r._field == \"frames\")\n  |> aggregateWindow(every: v.windowPeriod, fn: min, createEmpty: true)\n  |> map(fn: (r) => ({_time: r._time, _value: r._value, _field: r.node_id}))\n  |> group(columns: [\"_field\"])"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "showPoints": "never",
+            "spanNulls": 1500,
+            "fillOpacity": 0
+          },
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "id": 8,
+      "title": "PTP offset from grandmaster",
+      "datasource": {
+        "type": "influxdb",
+        "uid": "PF6CD3C7EE64CF7D1"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 21,
+        "w": 8,
+        "h": 8
+      },
+      "description": "Servo offset on each Sync.",
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "influxdb",
+            "uid": "PF6CD3C7EE64CF7D1"
+          },
+          "query": "from(bucket: \"telemetry\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"mqtt_consumer\" and (r.node_id == \"${node_a}\" or r.node_id == \"${node_b}\") and r.subsystem == \"ptp_status\" and r._field == \"offset_ns\")\n  |> map(fn: (r) => ({_time: r._time, _value: r._value, _field: r.node_id}))\n  |> group(columns: [\"_field\"])"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "showPoints": "never",
+            "spanNulls": false,
+            "fillOpacity": 0
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "unit": "ns"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 9,
+      "type": "stat",
+      "title": "Ingest losses (all nodes)",
+      "datasource": {
+        "type": "influxdb",
+        "uid": "PF6CD3C7EE64CF7D1"
+      },
+      "gridPos": {
+        "x": 8,
+        "y": 21,
+        "w": 6,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "influxdb",
+            "uid": "PF6CD3C7EE64CF7D1"
+          },
+          "query": "from(bucket: \"waveform_1s\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"daq2_ingest\")\n  |> filter(fn: (r) => r._field == \"gap_frames\" or r._field == \"invalid_time\" or r._field == \"mqtt_drops\" or r._field == \"buffer_drop_lines\" or r._field == \"write_errors\")\n  |> group(columns: [\"_field\"])\n  |> sum()"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          },
+          "mappings": [],
+          "unit": "none",
+          "displayName": "${__field.labels._field}"
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "value_and_name",
+        "justifyMode": "center",
+        "orientation": "auto"
+      },
+      "description": "Totals over the dashboard time range from daq2-ingest's stats, across every node. All should be 0."
+    },
+    {
+      "id": 10,
+      "type": "timeseries",
+      "title": "Ingest latency (all nodes)",
+      "datasource": {
+        "type": "influxdb",
+        "uid": "PF6CD3C7EE64CF7D1"
+      },
+      "gridPos": {
+        "x": 14,
+        "y": 21,
+        "w": 10,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "influxdb",
+            "uid": "PF6CD3C7EE64CF7D1"
+          },
+          "query": "from(bucket: \"waveform_1s\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"daq2_ingest\" and r._field =~ /^latency_(mqtt|stored)_p(50|99)_ms$/)\n  |> group(columns: [\"_field\"])\n  |> aggregateWindow(every: v.windowPeriod, fn: max, createEmpty: false)\n  |> map(fn: (r) => ({r with _field:\n      if r._field == \"latency_mqtt_p50_ms\" then \"Arrival, median\"\n      else if r._field == \"latency_mqtt_p99_ms\" then \"Arrival, 99th pct\"\n      else if r._field == \"latency_stored_p50_ms\" then \"Stored, median\"\n      else if r._field == \"latency_stored_p99_ms\" then \"Stored, 99th pct\"\n      else r._field}))\n  |> keep(columns: [\"_time\", \"_value\", \"_field\"])"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "showPoints": "never",
+            "spanNulls": 30000,
+            "fillOpacity": 0
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "unit": "ms"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true,
+          "calcs": [
+            "mean",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "description": "Delay from each full-rate packet's newest sample to its arrival over MQTT, and to InfluxDB confirming its write, from daq2-ingest's 10 s stats (worst worker in each interval). Needs the server clock synchronised to the grandmaster; negative values mean it isn't."
+    }
+  ]
+}

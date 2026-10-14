@@ -148,7 +148,7 @@ Open **`http://<server-ip>:3000`** in a browser (find the IP with `hostname -I`)
 
 If the page doesn't load from another machine, see [Troubleshooting](#troubleshooting).
 
-### Data source and dashboard
+### Data source and dashboards
 
 Both are provisioned from `grafana/provisioning/`, so there's nothing to set up by hand:
 
@@ -168,7 +168,16 @@ The **Phase** selector applies to everything phase-specific: power, power factor
 
 The full-rate panels show *DAQ2 off* or stay empty until a node publishes the DAQ2 stream.
 
-**Changing the dashboard:** you can edit it in Grafana, but provisioned dashboards are reloaded from the file, so changes are lost on restart unless you save them back. Use **Share → Export → Save to file** and replace `grafana/provisioning/dashboards/node-view.json`, then commit it.
+- **Node Compare** dashboard (`dashboards/node-compare.json`), also in **Microgrid**: two nodes side by side, for viewing the same-signal test and two-node runs. It only displays data; test results are computed offline from the stored samples. The top bar selects **Node A**, **Node B**, the **Input** (voltage or current) and its **Phase** (A, B or C). It refreshes every 5 s by default.
+
+| Part | What it shows |
+|------|---------------|
+| Top boxes | **Status**, **PTP** and **Completeness** for each node, as in Node View |
+| Overlay | Both nodes' samples over the same 60 ms at the full ~30 kHz; with the same signal the traces lie on top of each other |
+| Per second | RMS and DC mean of the selected input for both nodes (a steady RMS gap is a gain difference between the boards), and frames per second |
+| Bottom | PTP offset of both nodes, and the `daq2-ingest` loss counters and latency across all nodes |
+
+**Changing the dashboard:** you can edit it in Grafana, but provisioned dashboards are reloaded from the file, so changes are lost on restart unless you save them back. Use **Share → Export → Save to file** and replace the dashboard's file in `grafana/provisioning/dashboards/`, then commit it.
 
 ## 8. Data model (what's actually in InfluxDB)
 
@@ -463,7 +472,7 @@ docker compose up -d
 ├── mosquitto/config/mosquitto.conf            # broker config
 ├── telegraf/telegraf.conf                     # MQTT → InfluxDB mapping
 ├── grafana/provisioning/datasources/          # auto-provisioned Grafana data source
-├── grafana/provisioning/dashboards/           # auto-provisioned Node View dashboard
+├── grafana/provisioning/dashboards/           # auto-provisioned Node View and Node Compare dashboards
 ├── daq2-ingest/                               # full-rate DAQ2 decoder service (Python)
 │   ├── daq2.py                                # packet decoding, line protocol, 1 s aggregates
 │   ├── ingest.py                              # MQTT subscriber and batched InfluxDB writer
