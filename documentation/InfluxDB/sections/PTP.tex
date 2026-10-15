@@ -11,7 +11,7 @@ PTP time is TAI. The firmware converts it to UTC before publishing by subtractin
 All nodes share a single PTP clock domain. The historian server's system clock must be on UTC, synchronised to the same grandmaster or to a sufficiently accurate NTP source, so that Flux query time ranges expressed in wall-clock time correspond correctly to stored point timestamps.
 
 \subsection{Out-of-Order Writes}
-MQTT QoS 0 with no ordering guarantees means Telegraf may deliver points to InfluxDB with timestamps older than recently written points. InfluxDB handles out-of-order writes within a shard natively. Default shard duration in InfluxDB v2 is one week; behaviour at shard boundaries should be verified if a node reconnects after an outage longer than one week, though this is unlikely in a lab testbed context.
+MQTT QoS 0 with no ordering guarantees means Telegraf may deliver points to InfluxDB with timestamps older than recently written points. InfluxDB handles out-of-order writes natively, within and across shards. The \texttt{waveform} bucket uses one-hour shard groups, \texttt{telemetry} one day and \texttt{waveform\_1s} one week.
 
 \subsection{PTP Status Logging}
 Each burst carries a \texttt{sync} field, set to 1 when the node's PTP servo was locked at capture. The servo reports lock after eight consecutive offsets within 1~\textmu s of the grandmaster, with a Sync message received within the last 3~s. Bursts are only started on data whose timestamp is valid (no clock step or rate change during capture), and are restarted if a clock step occurs mid-collection.

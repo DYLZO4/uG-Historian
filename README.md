@@ -83,6 +83,7 @@ cat .env
 | `INFLUXDB_TOKEN`          | InfluxDB, Telegraf, daq2-ingest, Grafana | Admin API token, used by everything that reads or writes InfluxDB. Any long random string works. |
 | `GRAFANA_ADMIN_PASSWORD`  | Grafana              | Password for the Grafana `admin` user. |
 | `RAW_RETENTION`           | daq2-ingest          | Optional, default `7d`. How long full-rate data is kept. Size it to your disk: see [section 10](#10-full-rate-waveform-data-daq2-ingest). |
+| `INFLUXDB_MEMORY_LIMIT`   | InfluxDB             | Optional, default `8GiB`. Soft memory limit (`GOMEMLIMIT`); keep it a few GB below host RAM. Applied on every start. See [Compaction and memory](#compaction-and-memory). |
 
 > **These values are only applied the first time the containers start.** InfluxDB and Grafana store their users and tokens in Docker volumes. Changing `.env` later does **not** change the password or token. See [Resetting](#resetting-everything) if you need to start over.
 
@@ -321,6 +322,17 @@ Measured with synthetic 50 Hz data plus realistic noise: raw data takes about **
 | 30 days | ~1.5 TB |
 
 Scale linearly with the number of nodes. `waveform_1s` is tiny by comparison (~1 MB/day). Real signals may compress somewhat differently, so check actual usage after the first day with `docker exec influxdb du -sh /var/lib/influxdb2/engine/data` and leave headroom: InfluxDB needs free space for compactions.
+
+### Compaction and memory
+
+`waveform` uses one-hour shards. About 4 h after a shard goes cold, InfluxDB rewrites it in a full compaction (20–25 min per node-hour on an HDD). By default it runs up to half as many compactions at once as there are CPU threads; in the lab soak, three or four overlapping pushed InfluxDB to ~11 GB, swapped the host and stalled writes for minutes, so the node lost packets. `docker-compose.yml` therefore sets:
+
+| Setting | Value | Why |
+|---------|-------|-----|
+| `INFLUXD_STORAGE_MAX_CONCURRENT_COMPACTIONS` | `2` | Further compactions queue instead of running together. Enough for two nodes. |
+| `GOMEMLIMIT` | `INFLUXDB_MEMORY_LIMIT` in `.env`, default `8GiB` | Soft heap limit: InfluxDB collects garbage harder near it instead of growing into swap. Keep it a few GB below host RAM. |
+
+With more nodes, check `docker logs influxdb | grep "TSM compaction"`: if compactions queue for longer than an hour, raise the limit or move InfluxDB to faster storage.
 
 `RAW_RETENTION` only applies when the `waveform` bucket is first created. To change it later:
 

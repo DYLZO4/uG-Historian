@@ -53,6 +53,13 @@ services:
       - DOCKER_INFLUXDB_INIT_BUCKET=telemetry
       - DOCKER_INFLUXDB_INIT_RETENTION=90d
       - DOCKER_INFLUXDB_INIT_ADMIN_TOKEN=${INFLUXDB_TOKEN}
+      # Compactions: by default up to half the CPU threads run at once. Several full compactions
+      # of hourly waveform shards together pushed InfluxDB to ~11 GB, swapped the host and stalled
+      # writes for minutes (lab soak, 14 Oct 2026). Two at a time keeps up with two nodes.
+      - INFLUXD_STORAGE_MAX_CONCURRENT_COMPACTIONS=2
+      # Soft heap limit: the Go runtime collects harder near it instead of growing into swap.
+      # Not a hard cap (a Docker mem_limit would kill InfluxDB instead). Size it below host RAM.
+      - GOMEMLIMIT=${INFLUXDB_MEMORY_LIMIT:-8GiB}
     restart: unless-stopped
 
   telegraf:
@@ -104,6 +111,12 @@ volumes:
 
 The InfluxDB and Mosquitto ports are bound to loopback by default; Grafana is published on all interfaces for dashboard access from the lab LAN (Section~\ref{sec:security}). Sensitive values are passed via environment variables sourced from a \texttt{.env} file that is excluded from version control.
 
+\subsection{Compaction and Memory}
+\label{sec:compaction}
+The \texttt{waveform} bucket uses one-hour shard groups. About four hours after a shard stops receiving writes, InfluxDB rewrites it in a full compaction, which on the lab server's HDD takes 20--25 minutes for one node's hour (about 2.5~GB). By default InfluxDB runs up to half as many compactions at once as there are CPU threads. In the lab soak, three or four compactions overlapped twice: InfluxDB grew to about 11~GB, the host swapped, writes stalled for several minutes, and the node lost packets because it could not publish.
+
+The Compose file therefore sets \texttt{INFLUXD\_STORAGE\_MAX\_CONCURRENT\_COMPACTIONS=2}, so further compactions queue instead of running together, and \texttt{GOMEMLIMIT} (default 8~GiB, set with \texttt{INFLUXDB\_MEMORY\_LIMIT} in \texttt{.env}), a soft limit at which the Go runtime collects garbage harder instead of growing into swap. \texttt{GOMEMLIMIT} should sit a few gigabytes below the host's RAM. Two concurrent compactions suit up to two nodes; if compactions fall behind with more nodes (\texttt{TSM compaction} lines in \texttt{docker logs influxdb} queueing for longer than an hour), raise the limit or move InfluxDB to faster storage.
+
 \subsection{Persistent Volumes}
 InfluxDB and Grafana state are stored in named Docker volumes. Mosquitto data and logs are bind-mounted to host directories for visibility. The Telegraf configuration is bind-mounted read-only, and Grafana's data source and dashboard are provisioned from \path{grafana/provisioning/}. \texttt{daq2-ingest} is stateless: its image is built from the repository, and it creates its buckets on first start.
 
@@ -116,6 +129,7 @@ INFLUXDB_ADMIN_PASSWORD=<redacted>   # minimum 8 characters
 INFLUXDB_TOKEN=<redacted>
 GRAFANA_ADMIN_PASSWORD=<redacted>
 RAW_RETENTION=7d                     # optional: full-rate retention
+INFLUXDB_MEMORY_LIMIT=8GiB           # optional: InfluxDB soft memory limit
 \end{lstlisting}
 
-This file must not be committed to version control. Its values are applied only on the first start of the containers (\texttt{RAW\_RETENTION} only when the \texttt{waveform} bucket is first created); changing them later requires resetting the volumes. Step-by-step setup instructions are given in the repository \texttt{README.md}.
+This file must not be committed to version control. Its values are applied only on the first start of the containers (\texttt{RAW\_RETENTION} only when the \texttt{waveform} bucket is first created); changing them later requires resetting the volumes. \texttt{INFLUXDB\_MEMORY\_LIMIT} is the exception: it is applied whenever the InfluxDB container is created (Section~\ref{sec:compaction}). Step-by-step setup instructions are given in the repository \texttt{README.md}.
